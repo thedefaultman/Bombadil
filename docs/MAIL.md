@@ -510,25 +510,27 @@ desktop test and the VM smoke use it, and so can anyone without an account.
 ## Hyprland and the ISO
 
 What the shell and the image add around the service. Everything above stands; this is the part of it that
-lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
+lives in `shell/`, `packaging/`, `iso/`, `scripts/` and `share/skills/`.
 
 **The image.**
 
-- `iso/packages.x86_64` has `thunderbird`. `scripts/build-iso.sh` links `bombadil-mail` and
-  `bombadil-mail-host` into `/usr/local/bin` with the other commands, for the PATH. The native-messaging
+- `iso/packages.x86_64` has `thunderbird`, and the `bombadil` package depends on it. The package links
+  `bombadil-mail` and `bombadil-mail-host` into `/usr/bin` with the other commands, for the PATH (it makes a link
+  for every file in `bin/`). The native-messaging
   manifest the service writes names the host beside the package's own `bin/` (`engine.host_path`:
   `/usr/share/bombadil/bin/bombadil-mail-host` on the image) and only falls back to the PATH, so that is the
   path an installed package has to keep stable, not the link.
-- `bombadil-mail.service` is a user unit (`iso/airootfs/etc/systemd/user/`), enabled by the symlink in
-  `default.target.wants`. `Restart=on-failure`, `RestartSec=2`, `StartLimitIntervalSec=0` (nothing depends
+- `bombadil-mail.service` is a user unit (`packaging/bombadil/root/usr/lib/systemd/user/`), turned on for every
+  user, once, by the package's scriptlet, because its name is in `usr/share/bombadil/enable.user`; a user who
+  turns it off keeps it off through updates. `Restart=on-failure`, `RestartSec=2`, `StartLimitIntervalSec=0` (nothing depends
   on mail, so it is never given up on), `Nice=5`, and no `After=`: mail never holds the desktop back.
   Thunderbird stays in the unit's cgroup, so it goes with the service and returns with it. With no
   account the engine is off and Thunderbird is not started.
 - The unit starts at login, before Hyprland has a screen, and Thunderbird needs one. So `hyprland.start`
-  runs `systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP`
+  (in `share/hypr/bombadil.lua`) runs `systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP`
   and then restarts the unit: the service sees this session's compositor, and so does the Thunderbird it
   starts. A Hyprland restart therefore restarts the service and the engine once (drafts are in `mail.db`).
-- The window rule is `hl.window_rule({ name = "mail-engine", match = { class =
+- The window rule (in the same file) is `hl.window_rule({ name = "mail-engine", match = { class =
   "(?i)^(.*\\.)?thunderbird.*$" }, workspace = "special:mail-engine silent" })`. RE2, so `(?i)` and no
   look-around; it takes `thunderbird`, `Thunderbird`, `org.mozilla.thunderbird`, `net.thunderbird.Thunderbird`
   and `thunderbird-esr`, and not `bombadil-app-mail`. `silent` means a Thunderbird window never takes focus
@@ -543,7 +545,8 @@ lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
   that is for a real Hyprland to say). The smoke has a step for it, `mail-engine-window-keeps-the-keyboard`,
   which has not been run.
 - `share/skills/bombadil-mail/SKILL.md` tells the agent how to use the five tools and what it may not do;
-  `/etc/skel/.claude/skills/` and `/etc/skel/.agents/skills/` link it, like `bombadil-apps`.
+  `/etc/skel/.claude/skills/` and `/etc/skel/.agents/skills/` link it, like `bombadil-apps` (the links are in
+  `packaging/bombadil/root/etc/skel`; a home that lacks one gets it from homefix at the next agentd start).
 - `scripts/dev-session.sh` starts the service beside agentd on the fake engine, with a scratch `mail.db`,
   files folder, press log and socket (so a Bombadil you also use is not touched, and agentd and the CLI do
   not reach the real service of one). `BOMBADIL_MAIL_ENGINE=thunderbird` runs it for real.
@@ -599,7 +602,7 @@ lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
 
 **What checks it.** `tests/test_notice_qml.py` and the additions to `tests/test_pill_qml.py` feed JSON
 through a QML function in an offscreen window; `tests/test_iso_profile.py` reads the package list, the unit,
-the symlinks, the window rule's regex (as RE2 would take it), the build links, the skill links and the
+the enable list, the window rule's regex (as RE2 would take it), the `/usr/bin` links, the skill links and the
 smoke's check names; `tests/desktop/driver.py` (section 10) runs the real bar in headless sway with notices
 injected, then with the real service on the fake engine and the real agentd, then a bar started without
 `BOMBADIL_BAR_INJECT`, which takes no injected notice; `bombadil-smoke` runs on the

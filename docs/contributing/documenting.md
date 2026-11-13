@@ -216,7 +216,7 @@ in the same format; its hits are listed for a human to judge and never fail the 
 `.py`, `.sh`, `.log`, `.patch` and `LICENSE`. Links and anchors are read in `.md`, `.html` and `.htm` files
 only; the other text files are read for leaks and private terms. Screenshots and other bitmap images are
 never scanned, so check them by eye as the section above says. Files with any other suffix or none (the
-commands in `bin/` and the image's scripts in `iso/airootfs/usr/local/bin/`, `.service` and `.conf` files,
+commands in `bin/` and the package's scripts in `packaging/bombadil/root/usr/bin/`, `.service` and `.conf` files,
 `.js` and `.lua`) are not read either; look at those by hand.
 
 **Diagrams.** `--mermaid` renders each diagram in the Markdown files with Mermaid's command line tool,

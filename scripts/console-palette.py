@@ -11,7 +11,7 @@ own tones, so a failure printed on the console is in the same colours as the res
     scripts/console-palette.py --table    # the palette, one colour a line
 
 The parameters are pasted into iso/efiboot/loader/entries/01-bombadil.conf (the live system) and
-iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg (an installed one); tests/test_boot_console.py
+packaging/bombadil/root/etc/default/grub.d/zz-bombadil-console.cfg (an installed one); tests/test_boot_console.py
 fails when either differs from this output.
 """
 

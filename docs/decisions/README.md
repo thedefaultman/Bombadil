@@ -15,7 +15,7 @@ This page lists the decisions in Bombadil's design briefs, one row each, grouped
 | [Memory and the brain](memory-and-the-brain.md) | 94 | D-815 to D-907, D-1761 |
 | [Voice and words](voice-and-words.md) | 125 | D-908 to D-1032 |
 | [Identity and design system](identity-and-design-system.md) | 86 | D-1033 to D-1111, D-1762 to D-1768 |
-| [Installed OS and updates](installed-os-and-updates.md) | 173 | D-1112 to D-1283, D-1769 |
+| [Installed OS and updates](installed-os-and-updates.md) | 174 | D-1112 to D-1283, D-1769 to D-1770 |
 | [Everyday work](everyday-work.md) | 135 | D-1284 to D-1418 |
 | [Limits and recovery](limits-and-recovery.md) | 178 | D-1419 to D-1596 |
 | [Self-improvement](self-improvement.md) | 164 | D-1597 to D-1760 |

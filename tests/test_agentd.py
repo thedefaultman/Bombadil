@@ -40,6 +40,8 @@ async def test_turn_round_trip(home):
     await _ready(d)
     r, w = await _client(d.socket_path)
     first = json.loads(await r.readline())
+    # The Bombadil this process started on and the one installed now: the same, as nothing was updated meanwhile.
+    assert first.pop("version") == first.pop("version_installed")
     assert first == {"type": "status", "busy": False, "provider": "fake", "setup": "ready", "turns": 0,
                      "snapshots": False, "queued": 0, "turn": None, "queue": []}
     entries = json.loads(await r.readline())

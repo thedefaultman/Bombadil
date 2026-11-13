@@ -1,0 +1,1073 @@
+#!/usr/bin/env bash
+# Boot-time smoke test, run by bombadil-smoke.service when the kernel cmdline has `bombadil.smoke`.
+# Prints one BOMBADIL-SMOKE line per check to the console (serial, when booted that way) and
+# powers the machine off, so a VM run can be judged from its serial log.
+set -u
+out=/dev/console
+say() { echo "BOMBADIL-SMOKE: $*" | tee "$out"; }
+ok=0; fail=0
+check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); diag "$name"; fi; }
+# What a failed check leaves to read in the serial log: the windows Hyprland has and the programs that
+# should be running, for the first few failures (each costs a few seconds under emulation).
+ndiag=0
+diag() {
+  ndiag=$((ndiag+1)); (( ndiag > 4 )) && return 0
+  say "DIAG $1 windows: $(as_user hyprctl -j clients 2>&1 | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["pid"]) for c in json.load(sys.stdin)])' 2>&1 | tail -c 600)"
+  say "DIAG $1 programs: $(for n in Hyprland quickshell foot footclient zellij; do printf '%s=%s ' "$n" "$(pgrep -x "$n" | tr '\n' ,)"; done) agentd=$(pgrep -f agentd | head -3 | tr '\n' ,) chromium=$(pgrep -xc chromium)"
+}
+wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep 1; done; return 1; }
+# bombadil.smoke          live checks, then power off
+# bombadil.smoke=install  live checks, install to /dev/vda, power off (the host then boots the disk)
+# bombadil.smoke=install-encrypted
+#                         the installer alone, with a password (the host types it at GRUB on the next start)
+# bombadil.smoke=refresh  on a disk an older Bombadil installed: plant a marker in its home folder, refresh, power off
+# bombadil.smoke=install-update
+#                         the same as install, but the installed system starts as `update`
+# bombadil.smoke=undo     on an installed system: its layout, then an undo round trip over a reboot
+# bombadil.smoke=update   on an installed system: a pacman update from a newer build the host serves, then an undo
+#                         round trip over a reboot that brings the old build back
+# bombadil.smoke=refreshed  on a refreshed system: the old home folder is there, the old system is kept aside
+mode="$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^bombadil\.smoke=\?//p' | head -1)"
+say "START mode=${mode:-live}"
+# install-update is install: the same live checks and the same install. Only the system it installs starts as
+# something else (the update), which is what the cmdline of the installed system names.
+installed_mode=undo
+if [[ "$mode" == install-update ]]; then mode=install; installed_mode=update; fi
+# The installed system is tried through a round trip over a reboot in these modes: what plays a mail account or a
+# connection on the live stick does not run there.
+round_trip=""
+[[ "$mode" == undo || "$mode" == update ]] && round_trip=1
+
+check user-exists id user
+check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp'
+# `command -v a b` succeeds when either is found, so the brain's two and Mail's three are looked for one by one.
+check brain-tools-installed bash -c 'for b in bombadil-brain bombadil-brain-watch; do command -v $b || exit 1; done'
+check mail-tools-installed bash -c 'for b in thunderbird bombadil-mail bombadil-mail-host; do command -v $b || exit 1; done'
+# Connections: the service and the browser service, the Python they run on, and no mako (the shell owns the notifications).
+check connect-tools-installed bash -c 'for b in bombadil-connect bombadil-browserd notify-send wl-copy; do command -v $b || exit 1; done'
+check connect-python-installed python3 -c 'import httpx, httpx2; from mcp import ClientSession, MCPError'
+check mako-is-not-installed bash -c '! command -v mako'
+check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
+check greetd-active wait_for 60 systemctl is-active --quiet greetd
+check hyprland-running wait_for 120 pgrep -x Hyprland
+uid=$(id -u user 2>/dev/null || echo 1000)
+run="/run/user/$uid"
+sock="$run/bombadil/agentd.sock"
+# Run a command inside the user's Hyprland session.
+# shellcheck disable=SC2010
+as_user() {
+  sudo -u user env HOME=/home/user XDG_RUNTIME_DIR="$run" \
+    HYPRLAND_INSTANCE_SIGNATURE="$(ls "$run/hypr" 2>/dev/null | head -1)" \
+    WAYLAND_DISPLAY="$(cd "$run" 2>/dev/null && ls wayland-* 2>/dev/null | grep -v lock | head -1)" "$@"
+}
+# Call one os-mcp tool the way the agent would.
+mcp_call() {
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" \
+    | as_user timeout 60 bombadil-os-mcp | tail -1 | tee /dev/stderr | grep -qv '"isError": true'
+}
+# hyprctl -j WHAT, retried: under software emulation Hyprland's IPC can miss its deadline.
+# On failure it prints nothing and puts hyprctl's last answer on stderr, which lands in the check's log.
+hypr_json() { local o; for _ in 1 2 3 4 5; do o=$(as_user hyprctl -j "$1") && python3 -c 'import json,sys; json.loads(sys.argv[1])' "$o" 2>/dev/null && { printf '%s' "$o"; return 0; }; sleep 2; done; echo "hyprctl -j $1: $o" >&2; return 1; }
+has_client() { local o; o=$(hypr_json clients) && python3 -c "import json,sys; sys.exit(not any($1 for c in json.loads(sys.argv[1])))" "$o"; }
+no_config_errors() { local o; o=$(hypr_json configerrors) && python3 -c 'import json,sys; e=[x for x in json.loads(sys.argv[1]) if x]; print(e); sys.exit(bool(e))' "$o"; }
+# A virtual display must not stay at the 640x480 QEMU's EDID can report as preferred. It is fine at
+# any width a desktop fits in: a hypervisor may cap it (or the host window) below 1920x1080.
+virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any(x["width"] < 1280 for x in m))'; }
+# A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
+# no ALSA plugin to read one.
+audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
+# Every generated app has its own drawer (a special workspace), so a second never hides the first.
+apps_in_own_drawers() { hypr_json clients | python3 -c 'import json,sys; w=[c["workspace"]["name"] for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(w); sys.exit(len(w) < 2 or len(set(w)) != len(w))'; }
+has_layer() { hypr_json layers | grep -q "$1"; }
+special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
+drawer_away() { ! special_shown "$1"; }
+active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
+# No details window and no drawer showing (a failed hyprctl never counts as gone).
+drawer_gone() {
+  local c m; c=$(hypr_json clients) && m=$(hypr_json monitors) || return 1
+  python3 -c 'import json,sys; c, m = json.loads(sys.argv[1]), json.loads(sys.argv[2]); sys.exit(any(x["class"] == "bombadil-details" for x in c) or any((x.get("specialWorkspace") or {}).get("name") == "special:details" for x in m))' "$c" "$m"
+}
+grab() { as_user grim /tmp/smoke.png && test -s /tmp/smoke.png; }
+# Ask the host (scripts/test-vm.sh) for a screenshot of the VM screen.
+shot() { say "SHOT $1"; sleep "${SHOT_WAIT:-8}"; }
+# Ask the host to press keys on the VM's keyboard, over QMP: "meta_l" taps Super, "meta_l+esc"
+# is Super+Escape, "b r o w s e r ret" types a word and Enter.
+nkeys=0
+# The host sends each numbered request once; a reboot (the undo round trip) starts the numbers again,
+# so they carry the boot's id.
+bootid=$(cut -c1-8 /proc/sys/kernel/random/boot_id)
+keys() { nkeys=$((nkeys+1)); say "KEYS $bootid-$nkeys $*"; sleep "${KEYS_WAIT:-8}"; }
+history_has() { as_user bombadil history | grep -q "$1"; }
+# Launcher actions read "  HH:MM  <word you typed>: <what it did>". Match the word at the start of
+# the line, so "open the browser: Opened the browser." from an earlier test cannot stand in for it.
+launcher_done() { as_user bombadil history | grep -Ec "^ +[0-9]{2}:[0-9]{2} +$1: $2"; }
+launcher_ran() { [[ $(launcher_done "$1" "$2") -gt $3 ]] || { as_user bombadil history </dev/null | tail -n 3; return 1; }; }
+agentd_send() { as_user python3 -c 'import json, socket, sys; s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall((sys.argv[2] + "\n").encode()); s.shutdown(socket.SHUT_WR); s.recv(1 << 20)' "$sock" "$1"; }
+
+check agentd-socket wait_for 90 test -S "$sock"
+check quickshell-running wait_for 60 pgrep -x quickshell
+# Right after login Hyprland can be too busy to answer for a while (the bar is still starting).
+check hypr-config-ok wait_for 6 no_config_errors
+check bar-layer wait_for 30 has_layer bombadil-bar
+check virtual-display-size virtual_display_size
+check audio-output wait_for 60 audio_sink
+check pacman-mirror grep -q '^Server = ' /etc/pacman.d/mirrorlist
+check agentd-status as_user bombadil status
+check claude-cli as_user claude --version
+check codex-cli as_user codex --version
+check os-mcp-lists-tools bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 20 bombadil-os-mcp | grep -q show_panel'
+shot desktop
+check browser-panel mcp_call show_panel '{"name":"browser"}'
+check browser-window wait_for 120 has_client 'c["class"]=="bombadil-browser" and c["workspace"]["name"]=="special:browser"'
+check browser-shown special_shown browser
+shot browser
+check browser-hide mcp_call hide_panel '{"name":"browser"}'
+qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nAppWindow { title: \"Smoke\"; subtitle: \"generated on the spot\"; Label { text: \"Hello from a native app\"; color: Theme.fg; font: Theme.font } }'
+check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"}"
+check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
+# The app kit: each app slides in from its own drawer, reports its load, and the skill is installed.
+app_ok() { as_user bombadil-app status "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d.get("ok") and d.get("running")))'; }
+# Gone only if hide said so and Hyprland then answered without the drawer (no answer never counts as gone).
+app_hidden() { local h o; h=$(as_user bombadil-app hide "$1"); echo "$h"; [[ "$h" == *" hidden" ]] && sleep 2 && o=$(hypr_json monitors) && ! grep -q "\"special:app-$1\"" <<<"$o"; }
+open_example() { as_user cp -rT "/usr/share/bombadil/share/skills/bombadil-apps/examples/$1" "/home/user/Apps/$1" && mcp_call open_app "{\"name\":\"$1\"}"; }
+check app-shown wait_for 30 special_shown app-smoke-test
+check app-status wait_for 30 app_ok smoke-test
+check app-skill-installed as_user test -f /home/user/.claude/skills/bombadil-apps/SKILL.md -a -f /home/user/.agents/skills/bombadil-apps/SKILL.md
+check mail-skill-installed as_user test -f /home/user/.claude/skills/bombadil-mail/SKILL.md -a -f /home/user/.agents/skills/bombadil-mail/SKILL.md
+check connect-skill-installed as_user test -f /home/user/.claude/skills/bombadil-connect/SKILL.md -a -f /home/user/.agents/skills/bombadil-connect/SKILL.md
+shot app
+check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
+check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
+check apps-have-own-drawers wait_for 30 apps_in_own_drawers
+check second-app-shown wait_for 30 special_shown app-smoke-two
+check app-hide app_hidden smoke-two
+for ex in memory password-manager; do
+  [[ -d "/usr/share/bombadil/share/skills/bombadil-apps/examples/$ex" ]] || continue
+  check "example-$ex" open_example "$ex"
+  check "example-$ex-shown" wait_for 60 special_shown "app-$ex"
+  check "example-$ex-status" wait_for 30 app_ok "$ex"
+  shot "$ex"
+done
+check screenshot grab
+
+# Pictures from the machine: each is captured from this machine, reaches the bar (agentd says a bar
+# was there to draw it) and comes back as words. How long it took goes in the log: a capture over
+# 500 ms on real hardware is a finding, not a failure.
+# Without KVM a capture can run out of its time (6 to 10 s for `ip` or `systemd-analyze` while the
+# guest is still starting things: "ip did not answer", "systemd-analyze took longer than expected").
+# A slow machine is not a broken picture, so the pictures wait for the guest to be calm first, and a
+# capture that gave up is asked again with 4 times, then 12 times, the time (BOMBADIL_BUDGET_SCALE,
+# which the capture code reads) once the guest is calm again. A picture that comes back in the wrong
+# shape is a failure the first time; one that needed a longer wait says so in the log.
+calm() { awk '{exit !($1 < 1.5)}' /proc/loadavg; }
+wait_for 240 calm || say "NOTE the machine was still busy when the pictures were taken"
+picture() {
+  local t0 out try args="{\"kind\":\"$1\"}" scales=(1 4 12)
+  [[ -n "${2:-}" ]] && args="{\"kind\":\"$1\",\"target\":\"$2\"}"
+  for try in 1 2 3; do
+    t0=$(date +%s%N)
+    out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+      "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"system_map\",\"arguments\":$args}}" \
+      | as_user env BOMBADIL_BUDGET_SCALE="${scales[try-1]}" timeout 60 bombadil-os-mcp | tail -1) || return 1
+    echo "$1 took $(( ($(date +%s%N) - t0) / 1000000 )) ms (try $try, ${scales[try-1]}x the time): ${out:0:400}" >&2
+    grep -q 'shown above the bar' <<<"$out" && break
+    grep -q 'Could not read' <<<"$out" || return 1     # not a capture that gave up: no second try
+    wait_for 90 calm
+  done
+  grep -q 'shown above the bar' <<<"$out" || return 1
+  # The boot is more than its last line (the C-locale tree once read as the root alone).
+  [[ "$1" != boot ]] || (( $(grep -oE '\\n[0-9.]+ (s|ms|min): ' <<<"$out" | wc -l) >= 3 ))
+}
+check os-mcp-lists-pictures bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 20 bombadil-os-mcp | grep -q system_map'
+for kind in network boot disks sound screens; do check "picture-$kind" picture "$kind"; done
+check picture-service picture service systemd-logind
+shot picture
+
+# The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
+# Super+Escape stops a running turn and everything it started.
+# A key press only means something to a machine that is not flat out: under emulation an app that is
+# still starting can make the handover to the pill take longer than the test waits. Wait for calm.
+# The Super tap and Alt+Space fire the bar's global shortcuts (shell/PillKeys.qml), and Hyprland does nothing, and
+# says nothing, for one the bar has not registered: ask Hyprland for the list before a key depends on it.
+pill_shortcuts() { local o; o=$(as_user hyprctl globalshortcuts) && grep -q 'bombadil:pill-release' <<<"$o" && grep -q 'bombadil:pill-press' <<<"$o"; }
+check pill-shortcuts-registered wait_for 60 pill_shortcuts
+wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
+before=$(launcher_done browser "Opened the browser")
+keys meta_l
+SHOT_WAIT=1 shot after-super-tap
+keys b r o w s e r ret
+check super-tap-then-launcher wait_for 60 special_shown browser
+check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
+# A tap that did nothing: was it the bind (Hyprland never fired the pill's shortcut) or the pill? Say which
+# in the log: ask for the pill by hand and type the word again.
+if ! launcher_ran browser "Opened the browser" "$before"; then
+  say "DIAG the tap did nothing; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1); release binds: $(hypr_json binds | python3 -c 'import json,sys; print([b["key"] for b in json.load(sys.stdin) if b.get("release")])' 2>&1); shortcuts: $(as_user hyprctl globalshortcuts 2>&1 | tr '\n' ' ')"
+  as_user bombadil pill; sleep 3
+  keys b r o w s e r ret
+  if wait_for 30 launcher_ran browser "Opened the browser" "$before"; then say "DIAG by hand the pill took the word: the Super bind did not fire"
+  else say "DIAG by hand the pill did not take the word either"; fi
+fi
+shot launcher-browser
+check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
+# Alt+Space opens the pill too, for hosts that keep Super.
+wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
+before=$(launcher_done browser "Opened the browser")
+keys alt+spc
+SHOT_WAIT=1 shot after-alt-space
+keys b r o w s e r ret
+check alt-space-then-launcher wait_for 60 launcher_ran browser "Opened the browser" "$before"
+check browser-hide-third mcp_call hide_panel '{"name":"browser"}'
+# Super+Return opens a terminal on the desktop. A window that opens while a drawer shows lands inside the
+# drawer and leaves with it, so the drawer that shows (here the browser's) is put away first.
+check terminal-with-a-drawer-showing mcp_call show_panel '{"name":"browser"}'
+check terminal-drawer-shown wait_for 60 special_shown browser
+wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
+keys meta_l+ret
+check super-return-terminal wait_for 60 has_client 'c["class"]=="foot" and not c["workspace"]["name"].startswith("special:")'
+check super-return-puts-the-drawer-away wait_for 30 drawer_away browser
+as_user pkill -x foot
+as_user bombadil ask '!sleep 300' >/tmp/smoke.bang.log 2>&1 &
+check bang-turn-running wait_for 30 pgrep -f -x "sleep 300"
+shot pill-working
+keys meta_l+esc
+check super-escape-stops wait_for 30 bash -c '! pgrep -f -x "sleep 300"'
+check stop-in-history history_has "sleep 300.*Stopped"
+check details-drawer agentd_send '{"type": "details"}'
+check details-window wait_for 60 has_client 'c["class"]=="bombadil-details" and c["workspace"]["name"]=="special:details"'
+# The drawer takes the keyboard as it slides in, and every way out closes it: Esc in the
+# drawer, Details again, and Esc in the pill.
+check details-has-keyboard wait_for 30 active_is bombadil-details
+shot details
+keys esc
+check details-esc-closes wait_for 30 drawer_gone
+check details-reopen agentd_send '{"type": "details"}'
+check details-reopen-shown wait_for 60 active_is bombadil-details
+check details-again agentd_send '{"type": "details"}'
+check details-again-closes wait_for 30 drawer_gone
+check details-third agentd_send '{"type": "details"}'
+check details-third-shown wait_for 60 active_is bombadil-details
+keys meta_l
+keys esc
+check pill-esc-closes-details wait_for 30 drawer_gone
+shot details-closed
+
+# A service that dies comes back by itself, as a new process (systemd, Restart=always).
+main_pid() { as_user systemctl --user show -p MainPID --value "$1"; }
+restarted() { local p; p=$(main_pid "$1"); [[ -n $p && $p != 0 && $p != "$2" ]]; }
+revives() {
+  local old; old=$(main_pid "$1"); [[ -n $old && $old != 0 ]] || return 1
+  kill -9 "$old"
+  wait_for 90 restarted "$1" "$old"
+}
+check agentd-comes-back revives bombadil-agentd
+check agentd-answers-again wait_for 60 as_user bombadil status
+check bar-comes-back revives bombadil-shell
+check bar-layer-again wait_for 60 has_layer bombadil-bar
+units_active() { local u; for u in bombadil-agentd bombadil-shell; do as_user systemctl --user is-active --quiet "$u" || return 1; done; }
+check services-are-units units_active
+# A click on a box in a picture that names a service opens it in the same drawer, in the viewer
+# (bombadil view, which needs no pager on the image), and one Esc puts it away.
+check open-unit agentd_send '{"type": "open", "kind": "unit", "value": "systemd-logind.service"}'
+check open-unit-window wait_for 60 has_client 'c["class"]=="bombadil-details" and c["workspace"]["name"]=="special:details"'
+check open-unit-has-keyboard wait_for 30 active_is bombadil-details
+shot open-unit
+keys esc
+check open-unit-esc-closes wait_for 30 drawer_gone
+
+# Signing in (the live system has no provider picked and no login). agentd asks which AI in the
+# pill; a pick starts that CLI's own login with its page in the browser panel. Claude and Codex
+# get as far as their real page (or "No internet", when the VM has none), then are called off;
+# the whole round trip runs against fake_signin.py, a stand-in login on localhost.
+# setup_is STATES [LINE-REGEX [PROVIDER [PHASE [VIEW]]]]: agentd's setup line is in one of STATES
+# (a,b) and matches the rest. It prints what it saw: "state provider phase view | line".
+setup_is() {
+  as_user python3 - "$sock" "$@" <<'PY'
+import json, re, socket, sys
+sock, states = sys.argv[1], sys.argv[2].split(",")
+want = (sys.argv[3:] + ["", "", "", ""])[:4]
+s = socket.socket(socket.AF_UNIX); s.settimeout(30); s.connect(sock)
+for raw in s.makefile():
+    m = json.loads(raw)
+    if m.get("type") == "setup":
+        break
+print(m.get("state"), m.get("provider"), m.get("phase"), m.get("view"), "|", m.get("line"), flush=True)
+ok = (m.get("state") in states and re.search(want[0], m.get("line") or "") is not None
+      and all(not w or m.get(k) == w for w, k in zip(want[1:], ("provider", "phase", "view"))))
+sys.exit(0 if ok else 1)
+PY
+}
+not_checking() { ! setup_is checking; }
+# cdp_tab REGEX: a tab in the panel's Chromium has an address that matches.
+cdp_tab() { python3 -c 'import json, re, sys, urllib.request as u
+t = json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20))
+print([x.get("url") for x in t]); sys.exit(not any(re.search(sys.argv[1], x.get("url", "")) for x in t if x.get("type") == "page"))' "$1"; }
+no_cdp_tab() { ! cdp_tab "$1" >/dev/null; }
+panel_away() { ! special_shown browser; }
+gone() { ! pgrep -u user -f "$1"; }
+# restart_agentd [VAR=value...]: agentd again, in this environment, its words in /tmp/smoke.agentd.log.
+restart_agentd() {
+  # agentd is a user service that systemd starts again when it is killed, in the normal environment:
+  # stop the unit first, so the one started here is the only one.
+  as_user systemctl --user stop bombadil-agentd
+  pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
+  echo "--- agentd $*" >>/tmp/smoke.agentd.log
+  as_user env "$@" setsid -f agentd >>/tmp/smoke.agentd.log 2>&1 </dev/null
+  wait_for 60 test -S "$sock" && wait_for 90 not_checking
+}
+page_or_offline() { setup_is signing_in "" "$1" waiting || setup_is offline "No internet" "$1"; }
+# try_provider NAME PAGE: pick it; its page shows in the panel (or "No internet"); the panel is out.
+try_provider() {
+  agentd_send "{\"type\": \"setup_action\", \"id\": \"provider:$1\"}" || return 1
+  wait_for 240 page_or_offline "$1" || return 1
+  if setup_is offline "" "$1"; then echo "no internet in this VM: $1 stops at the offline line"; return 0; fi
+  wait_for 90 cdp_tab "$2" && wait_for 60 special_shown browser
+}
+# called_off PROVIDER: Cancel (Esc) ends the sign-in; the pill says so.
+called_off() { agentd_send '{"type": "setup_action", "id": "cancel"}'; wait_for 90 setup_is signed_out,offline 'cancelled|No internet' "${1:-}"; }
+port_free() { ! ss -ltn | grep -qE "127\.0\.0\.1:$1\b"; }
+held_prompt_ran() { grep -q "echo: hello there" /tmp/smoke.held.log; }
+signin_manual() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=manual FAKE_SIGNIN_DELAY=3 && wait_for 180 setup_is ready 'Signed in to Fake'; }
+slid_out() { mcp_call hide_panel '{"name":"browser"}' && wait_for 60 setup_is signing_in 'waiting in the browser' fake waiting hidden; }
+browser_closed() { pkill -u user -f -- '--class=bombadil-browser'; wait_for 90 setup_is signing_in 'was closed' fake waiting closed; }
+page_again() { agentd_send '{"type": "setup_action", "id": "show"}' && wait_for 180 setup_is signing_in 'in the browser' fake waiting shown && wait_for 90 cdp_tab '/authorize'; }
+# What the browser looked like when a check on its page failed: its main processes with their whole
+# command lines, the windows, every target the debugging port lists (with its type), the profile's
+# singleton files and agentd's last words.
+# shellcheck disable=SC2010
+browser_diag() {
+  say "DIAG browser, whole command lines (pid ppid started args): $(ps -u user -o pid=,ppid=,lstart=,args= | grep -F -- '--class=bombadil-browser' | grep -v -e '--type=' -e grep | tr '\n' '|')"
+  say "DIAG windows: $(hypr_json clients | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["title"][:40]) for c in json.load(sys.stdin)])' 2>&1)"
+  say "DIAG browser targets: $(python3 -c 'import json, urllib.request as u
+for t in json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20)):
+    print(t.get("type"), t.get("url"))' 2>&1 | tr '\n' '|')"
+  say "DIAG browser profile: $(ls -la /home/user/.local/share/bombadil/browser 2>&1 | grep -i singleton | tr '\n' '|')"
+  agentd_log
+}
+page_again_or_diag() { page_again || { browser_diag; return 1; }; }
+times_out() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never BOMBADIL_SIGNIN_TIMEOUT=20 && wait_for 240 setup_is signed_out 'timed out' fake; }
+offline() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2 BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:47811 && wait_for 60 setup_is offline 'No internet' fake; }
+# Back to the unit's agentd, as the session booted.
+agentd_unit_again() {
+  pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
+  as_user systemctl --user start bombadil-agentd
+  wait_for 60 test -S "$sock" && wait_for 90 not_checking
+}
+# A sign-in that turns ready with no persona.toml puts the name and voice card up and writes the defaults at once, so
+# a block that signs in only to see the pill's line takes the file away again (the mail block's leaves it for the
+# connection block's sign-in, which then asks for nothing): the voice checks further down need none.
+forget_persona() { rm -f /home/user/.config/bombadil/persona.toml; }
+agentd_log() { tail -n 60 /tmp/smoke.agentd.log | while IFS= read -r l; do say "AGENTD-LOG: $l"; done; }
+
+# Coding sessions (dev.py): a shell session on a project starts in its own systemd scope and
+# slice with a floating viewer, lives on when that window closes, comes back by name and ends.
+# A shell needs no provider login, so this runs on a fresh VM.
+viewer=bombadil-session-smoke-shell
+unit_active() { as_user systemctl --user list-units --all --no-legend --plain "$1" | grep -q ' active '; }
+unit_gone() { ! unit_active "$1"; }
+zellij_has() { as_user zellij list-sessions --short --no-formatting 2>/dev/null | grep -qx "$1"; }
+zellij_lacks() { ! zellij_has "$1"; }
+no_client() { ! has_client "$1"; }
+says() { local want=$1; shift; as_user bombadil ask "$*" | tee /dev/stderr | grep -q "$want"; }
+hypr_do() { local o; o=$(as_user hyprctl dispatch "$1") && [[ "$o" == "" || "$o" == "ok" ]] || { echo "$o"; return 1; }; }
+close_viewer() { hypr_do "hl.dsp.focus({ window = \"class:^($viewer)\$\" })" && hypr_do 'hl.dsp.window.close()'; }
+# The viewer is most of the screen, not foot's own 700x500.
+viewer_big() { local m c; m=$(hypr_json monitors) && c=$(hypr_json clients) && python3 -c 'import json, sys; m = json.loads(sys.argv[1])[0]; c = [x for x in json.loads(sys.argv[2]) if x["class"] == sys.argv[3]]; print(m["width"], m["height"], [x["size"] for x in c]); sys.exit(not c or c[0]["size"][0] < 0.7 * m["width"] / m.get("scale", 1))' "$m" "$c" "$viewer"; }
+make_project() { as_user bash -c 'mkdir -p ~/Projects/smoke && cd ~/Projects/smoke && git init -q && git -c user.name=smoke -c user.email=smoke@localhost commit -q --allow-empty -m start'; }
+check dev-tools bash -c 'command -v zellij foot footclient bombadil-signal'
+check dev-hooks-parse python3 -c 'import json, tomllib; json.load(open("/etc/claude-code/managed-settings.d/50-bombadil.json")); tomllib.load(open("/etc/codex/requirements.toml", "rb"))'
+check dev-linger bash -c 'loginctl show-user user -p Linger --value | grep -qx yes'
+check dev-project make_project
+check dev-start says "Started shell on Smoke" shell smoke
+check dev-zellij wait_for 20 zellij_has bombadil-smoke-shell
+check dev-scope wait_for 20 unit_active 'bombadil-dev-smoke-shell-*.scope'
+check dev-slice unit_active 'bombadil-dev-smoke.slice'
+check dev-window wait_for 60 has_client "c['class']=='$viewer' and c['floating']"
+check dev-window-size viewer_big
+shot session
+check dev-close-window close_viewer
+check dev-window-gone wait_for 30 no_client "c['class']=='$viewer'"
+check dev-lives-on zellij_has bombadil-smoke-shell
+check dev-back-by-name says "Back to shell on Smoke" shell smoke
+check dev-window-again wait_for 60 has_client "c['class']=='$viewer'"
+check dev-end says "Ended shell on Smoke" end shell smoke
+check dev-ended wait_for 20 zellij_lacks bombadil-smoke-shell
+check dev-scope-gone wait_for 20 unit_gone 'bombadil-dev-smoke-shell-*.scope'
+check dev-in-history history_has "Ended shell on Smoke"
+# Mail (docs/MAIL.md): Thunderbird is the engine, kept unseen by bombadil-mail, whose user unit starts at
+# login. The live system has no mail account, so what needs mail runs the service on its fake engine (sample
+# mailboxes, a new mail every few seconds) in the unit's place, then puts the unit back. The fake's database
+# and attachment folder are scratch ones, so its sample accounts are never in the mail.db the unit's service
+# reads next. The press log stays where agentd writes it, which is where the service looks.
+mail_unit() { as_user systemctl --user "$@" bombadil-mail.service; }
+mail_gone() { ! pgrep -u user -f 'bin/bombadil-mail$' >/dev/null; }
+fake_mail() {
+  mail_unit stop; wait_for 20 mail_gone || return 1
+  rm -rf /tmp/smoke-mail; install -d -o user -g user /tmp/smoke-mail
+  as_user env BOMBADIL_MAIL_ENGINE=fake BOMBADIL_MAIL_FAKE_DRIP=4 BOMBADIL_MAIL_DB=/tmp/smoke-mail/mail.db \
+    BOMBADIL_MAIL_FILES=/tmp/smoke-mail/files setsid -f bombadil-mail >>/tmp/smoke.mail.log 2>&1 </dev/null
+  wait_for 30 test -S "$run/bombadil/mail.sock"
+}
+restore_mail() {
+  pkill -u user -f 'bin/bombadil-mail$'; wait_for 20 mail_gone || return 1
+  mail_unit start && wait_for 60 mail_unit is-active --quiet
+}
+# agentd says new mail from someone known as a notice: wait for one on its own socket.
+# notice_from_agentd SOURCE [TEXT]: the first notice of that source, with chips and (when given) TEXT in its line.
+notice_from_agentd() {
+  as_user python3 - "$sock" "$1" "${2:-}" <<'PY'
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX); s.settimeout(40); s.connect(sys.argv[1])
+for raw in s.makefile():
+    m = json.loads(raw)
+    if m.get("type") == "notice" and m.get("source") == sys.argv[2]:
+        print(m, flush=True)
+        sys.exit(0 if m.get("line") and m.get("actions") and sys.argv[3] in m["line"] else 1)
+sys.exit(1)
+PY
+}
+mail_notice_from_agentd() { notice_from_agentd mail; }
+# The bar has it, and is showing it (the pill's own line must be free for a notice to show).
+line_state() { as_user timeout 10 quickshell ipc -p /usr/share/bombadil/shell/shell.qml call line state; }
+notice_on_the_line() {
+  # What is printed first is what a failure shows: the line's own state (busy, text, shown), then the notices.
+  line_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k: v for k, v in d.items() if k != "notices"}, d["notices"]); sys.exit(not (d["noticeShown"] and any(n["source"] == sys.argv[1] and n["actions"] for n in d["notices"])))' "$1"
+}
+mail_notice_on_the_line() { notice_on_the_line mail; }
+# Windows of class Thunderbird (the Arch package's is org.mozilla.Thunderbird) open on mail-engine, which is never
+# shown and never has the keyboard. Both spellings are opened by the check, and every class the window rule's own
+# pattern takes is held to it, so a class that matches and landed elsewhere fails as that, not as "no window".
+engine_window_hidden() {
+  local c m a
+  c=$(hypr_json clients) && m=$(hypr_json monitors) && a=$(hypr_json activewindow) || return 1
+  python3 -c 'import json,re,sys; c, m, a = (json.loads(x) for x in sys.argv[1:4])
+rule = re.compile(r"(?i)(.*\.)?thunderbird.*")
+t = [x for x in c if rule.fullmatch(x["class"])]
+print([(x["class"], x["workspace"]["name"]) for x in t], a.get("class"))
+sys.exit(bool(len({x["class"].lower() for x in t} & {"thunderbird", "org.mozilla.thunderbird"}) < 2
+              or any(x["workspace"]["name"] != "special:mail-engine" for x in t)
+              or rule.fullmatch(a.get("class", ""))
+              or any((x.get("specialWorkspace") or {}).get("name") == "special:mail-engine" for x in m)))' "$c" "$m" "$a"
+}
+mail_accounts_listed() { as_user bombadil mail accounts | tee /dev/stderr | grep -q maya@acme.example; }
+mail_log() { local l; while IFS= read -r l; do say "MAIL-LOG: $l"; done < <(tail -n 30 /tmp/smoke.mail.log); }
+check thunderbird-runs as_user timeout 90 thunderbird --version
+check mail-unit-enabled mail_unit is-enabled
+check mail-unit-active wait_for 60 mail_unit is-active --quiet
+# The unit's own service answers on its socket (no account yet: the engine is off, not broken).
+check mail-unit-answers wait_for 60 as_user timeout 20 bombadil mail status
+if [[ -z "$round_trip" ]]; then
+  : >/tmp/smoke.mail.log
+  # Thunderbird's windows map while the pill holds the keyboard (a tap on Super), as they do when the engine
+  # starts or a compose window opens under someone typing: "silent" has to leave the keyboard where it is, and
+  # the word typed next has to reach the pill (the pill gives the keyboard back after 20 s, so this goes at once).
+  # The pill gives the keyboard back 20 s after the tap (shell.qml), and a slow machine needs most of that for two
+  # terminal windows to map, so the host gets 4 s, not 8, to press each of these two. The times are printed.
+  before=$(launcher_done browser "Opened the browser")
+  { sleep 4; as_user foot --app-id Thunderbird -e sleep 120 & as_user foot --app-id org.mozilla.Thunderbird -e sleep 120 & wait; } >/dev/null 2>&1 &
+  tap_at=$SECONDS
+  KEYS_WAIT=4 keys meta_l
+  check mail-engine-window-hidden wait_for 60 engine_window_hidden
+  say "NOTE the windows were hidden $((SECONDS - tap_at)) s after the tap (the pill keeps the keyboard 20 s)"
+  KEYS_WAIT=4 keys b r o w s e r ret
+  check mail-engine-window-keeps-the-keyboard wait_for 60 launcher_ran browser "Opened the browser" "$before"
+  say "NOTE the word was answered $((SECONDS - tap_at)) s after the tap"
+  launcher_ran browser "Opened the browser" "$before" || say "DIAG the word did not reach the pill; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1)"
+  check mail-engine-browser-hide mcp_call hide_panel '{"name":"browser"}'
+  pkill -u user -f '^foot --app-id (org\.mozilla\.)?Thunderbird -e sleep 120$'
+  # The setup line owns the pill's line until an AI is signed in, and a notice waits behind it (it is shown only
+  # on an idle line), so the notice checks run with the stand-in provider, which needs no sign-in.
+  check mail-agentd-signed-in restart_agentd BOMBADIL_PROVIDER=fake
+  check mail-fake-starts fake_mail
+  check mail-status wait_for 30 as_user timeout 20 bombadil mail status
+  check mail-accounts-listed wait_for 30 mail_accounts_listed
+  check mail-new-mail-is-a-notice mail_notice_from_agentd
+  check mail-notice-on-the-line wait_for 40 mail_notice_on_the_line
+  shot mail-notice
+  before=$(launcher_done mail "Opened Mail")
+  check mail-word-opens-window as_user timeout 60 bombadil ask mail
+  check mail-launcher-without-model wait_for 30 launcher_ran mail "Opened Mail" "$before"
+  check mail-window wait_for 120 has_client 'c["class"]=="bombadil-app-mail" and c["workspace"]["name"]=="special:app-mail"'
+  check mail-window-shown wait_for 30 special_shown app-mail
+  check mail-window-status wait_for 30 app_ok mail
+  shot mail
+  check mail-window-hide app_hidden mail
+  check mail-unit-restored restore_mail
+  check mail-agentd-unit-again agentd_unit_again
+  mail_log
+fi
+
+
+# Connections (docs/CONNECT.md): bombadil-connect is a system unit with its own user, and what it keeps is closed to
+# the person's own processes. The live system has no connection, so what needs one runs the same unit on its fake
+# engine (sample messages and tasks) through a drop-in, with its database in a scratch folder of the unit's own
+# state directory (the real connect.db never sees a sample); the folder and the drop-in are taken away afterwards.
+connect_unit() { systemctl "$@" bombadil-connect.service; }
+connect_dropin=/run/systemd/system/bombadil-connect.service.d
+fake_connect() {
+  install -d "$connect_dropin"
+  install -d -o bombadil-connect -g bombadil-connect -m 0700 /var/lib/bombadil-connect/smoke-fake
+  printf '[Service]\nEnvironment=BOMBADIL_CONNECT_ENGINE=fake BOMBADIL_CONNECT_STATE=/var/lib/bombadil-connect/smoke-fake\n' >"$connect_dropin/fake.conf"
+  systemctl daemon-reload && connect_unit restart && wait_for 30 test -S /run/bombadil-connect/connect.sock
+}
+restore_connect() {
+  rm -rf "$connect_dropin" /var/lib/bombadil-connect/smoke-fake; systemctl daemon-reload
+  connect_unit restart && wait_for 60 connect_unit is-active --quiet
+}
+# connect_says OP EXPRESSION: the service answers the person's own process (not root, not its user) and the
+# answer `r` satisfies EXPRESSION.
+connect_says() {
+  as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil.connect import client
+r = client.request(sys.argv[1], 5); print(r, flush=True); sys.exit(not eval(sys.argv[2]))' "$1" "$2"
+}
+browserd_up() {
+  as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil.browserd import client
+r = client.request("status", 5); print(r, flush=True); sys.exit(not isinstance(r.get("up"), bool))'
+}
+# The directory is its own user's and closed to everyone else, so the person's processes cannot list it. They can still
+# `sudo` on this image (sudoers.d/bombadil), so this is what the unit keeps, not yet a wall against an agent that runs as them.
+connect_state_closed() { [[ "$(stat -c %U:%a /var/lib/bombadil-connect)" == bombadil-connect:700 ]] && ! as_user ls /var/lib/bombadil-connect; }
+# The unit as systemd loaded it, not as the file reads.
+connect_hardened() {
+  local want key
+  for want in User=bombadil-connect NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes PrivateTmp=yes RuntimeDirectoryMode=0755 MemoryMax=314572800; do
+    key=${want%%=*}
+    [[ "$(connect_unit show -P "$key")" == "${want#*=}" ]] || { echo "$key is $(connect_unit show -P "$key"), not ${want#*=}"; return 1; }
+  done
+}
+# The shell's NotificationServer is the one owner of the name, whatever a web page or notify-send calls it by, and a
+# notification becomes one line with Reply and Open, shown by the bar. notify-send stands in for a page's notification.
+notifications_owner_is_the_shell() { as_user busctl --user status org.freedesktop.Notifications | tee /dev/stderr | grep -q '^Comm=quickshell'; }
+notification_becomes_a_notice() {
+  notice_from_agentd notify "Legal just signed off" >/tmp/smoke.notify.log 2>&1 &
+  local listener=$!
+  sleep 2   # the listener is connected before the notification is sent
+  as_user notify-send -a Teams "Priya Shah" "Legal just signed off" || return 1
+  wait_for 8 notice_on_the_line notify || { kill "$listener" 2>/dev/null; cat /tmp/smoke.notify.log; return 1; }
+  wait "$listener"; local heard=$?
+  cat /tmp/smoke.notify.log; return $heard
+}
+check connect-user-exists bash -c 'getent passwd bombadil-connect | grep -q nologin'
+check connect-unit-enabled connect_unit is-enabled
+check connect-unit-active wait_for 60 connect_unit is-active --quiet
+check connect-unit-hardened connect_hardened
+# No connection yet: the service is up and says so, to a process that is not its own user.
+check connect-unit-answers wait_for 60 connect_says status 'r.get("state") == "ok"'
+check connect-state-is-closed connect_state_closed
+check browserd-unit-enabled as_user systemctl --user is-enabled bombadil-browserd.service
+check browserd-unit-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-browserd.service
+check browserd-unit-answers wait_for 60 browserd_up
+if [[ -z "$round_trip" ]]; then
+  check mako-is-not-running bash -c '! pgrep -x mako'
+  check notifications-owner-is-the-shell wait_for 30 notifications_owner_is_the_shell
+  # The notice waits behind the setup line until an AI is signed in (as the mail notice does): the stand-in provider
+  # needs no sign-in.
+  check notification-agentd-signed-in restart_agentd BOMBADIL_PROVIDER=fake
+  check notification-becomes-a-notice notification_becomes_a_notice
+  check notification-agentd-unit-again agentd_unit_again
+  forget_persona
+  check connect-fake-starts fake_connect
+  check connect-status wait_for 30 connect_says status 'r.get("state") == "ok"'
+  check connect-connections-listed wait_for 30 connect_says connections 'r["connections"]'
+  check connect-messages-listed wait_for 30 connect_says messages 'r["messages"]'
+  check connect-unit-restored restore_connect
+fi
+
+
+
+# The block below picks other providers, starts and cancels their logins (`codex login` revokes a
+# stored Codex login) and deletes the config file at its end. It is for a system with no provider
+# chosen yet (the live ISO), never one a person has signed in on. The install modes that plant a sign-in
+# of their own (install-encrypted, refresh) and the update modes do not run it either.
+signin_config=/home/user/.config/bombadil/config.toml
+if [[ "$mode" =~ ^(install|live|)$ && -e "$signin_config" ]]; then
+  say "SKIP signin: a provider is already chosen here, and these checks would change it"
+fi
+if [[ "$mode" =~ ^(install|live|)$ && ! -e "$signin_config" ]]; then
+  : >/tmp/smoke.agentd.log
+  check signin-agentd-starts restart_agentd
+  check signin-asks-which-ai setup_is choose 'Which AI should run this computer'
+  shot signin-choose
+
+  # The voice. The first sign-in that turns ready with no persona.toml puts the name and voice card up in
+  # place of the "Signed in" line, with the keyboard already on it: a typed name and Enter save it, and the
+  # word `voice` brings the card back. (Before a sign-in the pill holds every word, so this comes first.)
+  persona_file=/home/user/.config/bombadil/persona.toml
+  persona_has() { grep -q "$1" "$persona_file"; }
+  check no-persona-before-voice bash -c "! test -e $persona_file"
+  check voice-signin restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2
+  check voice-card-asked wait_for 240 persona_has '^voice = "merry"'
+  check voice-panel-away wait_for 90 panel_away
+  shot voice-card
+  shot voice-card-settled   # the same card a few seconds on: whole, and not still growing
+  keys shift+d a n i e l ret
+  check voice-name-saved wait_for 60 persona_has '^name = "Daniel"'
+  check voice-default-merry persona_has '^voice = "merry"'
+  shot voice-saved
+  # `bombadil pill` is what the Super bind runs. A tap and a word sent right after it race each other under
+  # software emulation (the launcher checks above lose the same race), so ask for the pill and let it settle.
+  as_user bombadil pill; sleep 3
+  keys v o i c e ret
+  check voice-word-answered wait_for 30 history_has "voice: Opened the voice card"
+  shot voice-word
+  keys esc
+  rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml
+  check voice-agentd-restored restart_agentd
+  check signin-codex-page try_provider codex '^https://(auth\.openai\.com|chatgpt\.com)/'
+  shot signin-codex
+  check signin-codex-called-off called_off codex
+  check signin-codex-port-freed wait_for 30 port_free 1455
+  check signin-claude-page try_provider claude '^https://(claude\.com|claude\.ai|platform\.claude\.com)/'
+  shot signin-claude
+  check signin-claude-called-off called_off claude
+  check signin-claude-login-ended wait_for 30 gone 'auth login'
+
+  # The round trip, against the stand-in: the page comes back to the CLI by itself, and a prompt
+  # asked meanwhile runs after. FAKE_SIGNIN_DELAY keeps the page up long enough for a picture.
+  check signin-fake-starts restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=40
+  check signin-fake-page wait_for 180 cdp_tab '^http://127\.0\.0\.1:[0-9]+/authorize'
+  check signin-fake-panel-shown wait_for 90 special_shown browser
+  as_user timeout 900 bombadil ask "hello there" >/tmp/smoke.held.log 2>&1 &
+  shot signin-page
+  check signin-fake-signed-in wait_for 240 setup_is ready 'Signed in to Fake' fake
+  check signin-fake-panel-away wait_for 90 panel_away
+  shot signin-done
+  check signin-held-prompt-ran wait_for 240 held_prompt_ran
+  # The printed page, which ends on a code: the code is typed into the CLI for the user.
+  rm -f /home/user/.fake-signin
+  check signin-code-pasted signin_manual
+  # The panel slid out, then the browser closed: the pill says so and brings the page back.
+  rm -f /home/user/.fake-signin
+  check signin-waits restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never
+  check signin-waiting wait_for 240 setup_is signing_in 'in the browser' fake waiting shown
+  check signin-slid-out slid_out
+  shot signin-hidden
+  check signin-browser-closed browser_closed
+  check signin-page-again page_again_or_diag
+  shot signin-page-again
+  check signin-esc-cancels called_off fake
+  # Called off, the login page is put away: no tab on it, another tab in its place (the browser's last tab
+  # is never closed, since that would quit it and leave the panel waiting for a window), the window still there.
+  check signin-page-put-away wait_for 30 no_cdp_tab '/authorize'
+  check signin-a-tab-stays cdp_tab '.'
+  check signin-browser-stays has_client 'c["class"]=="bombadil-browser"'
+  check signin-cli-ended wait_for 30 gone fake_signin.py
+  # Nobody finishes it: it times out. No internet: it waits, and signs in once it is back.
+  check signin-times-out times_out
+  check signin-offline offline
+  shot signin-offline
+  python3 -m http.server --bind 127.0.0.1 47811 >/dev/null 2>&1 &
+  online=$!
+  check signin-back-online wait_for 240 setup_is ready 'Signed in to Fake' fake
+  kill "$online" 2>/dev/null
+  # Back to the session as it booted (no AI picked yet), for what follows.
+  rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml
+  check agentd-restored agentd_unit_again
+  agentd_log
+fi
+
+# Left alone, the session costs next to nothing. Hyprland, the bar, the daemon and the brain are watched
+# together, because a bar that redraws forever makes Hyprland draw forever too (docs/IDLE-COST.md): in this
+# very VM that was Hyprland at 265% and the bar at 97% of a core with nothing on screen. Everything is left
+# alone for a while first, since the apps and the browser this run started are still settling.
+# Three slices of IDLE_CPU_SECONDS, and the middle one is what counts: a need standing for the person plays
+# one beat of the stone's knock now and then, which this VM's software compositor pays for with a few cores
+# for a few seconds, so one slice may hold it; a loop that never ends is in every slice. The limit is for
+# this VM (Hyprland draws in software here, and under TCG too, at a tenth of the speed of a real machine):
+# the same stack uses about a tenth of that on real hardware, which tests/desktop/idle.py holds to 10%.
+idle_share() {
+  python3 - "${IDLE_CPU_LIMIT:-30}" "${IDLE_CPU_SECONDS:-10}" <<'PY'
+import os, sys, time
+limit, seconds, clk = float(sys.argv[1]), float(sys.argv[2]), os.sysconf("SC_CLK_TCK")
+MUST = ("Hyprland", "quickshell")           # found by the name of the process
+ALSO = ("agentd", "bombadil-brain")         # scripts: found by the name of the file they run
+def watched():
+    found = {}
+    for p in os.listdir("/proc"):
+        if not p.isdigit():
+            continue
+        try:
+            comm = open(f"/proc/{p}/comm").read().strip()
+            args = open(f"/proc/{p}/cmdline").read().split("\0")
+        except OSError:
+            continue
+        if comm in MUST:
+            found[int(p)] = comm
+        for name in ALSO:
+            if any(os.path.basename(a) == name for a in args[:3]):
+                found[int(p)] = name
+    return found
+def ticks(pid):
+    total = 0
+    try:
+        for t in os.listdir(f"/proc/{pid}/task"):
+            raw = open(f"/proc/{pid}/task/{t}/stat").read()
+            f = raw[raw.rindex(")") + 2:].split()
+            total += int(f[11]) + int(f[12])
+    except OSError:
+        pass
+    return total
+slices, seen = [], set()
+for _ in range(3):
+    before = {pid: (name, ticks(pid)) for pid, name in watched().items()}
+    t0 = time.monotonic()
+    time.sleep(seconds)
+    dt = time.monotonic() - t0
+    share = {}
+    for pid, (name, then) in before.items():
+        share[name] = share.get(name, 0.0) + max(0, ticks(pid) - then) / clk / dt * 100
+    seen |= set(share)
+    slices.append(share)
+totals = sorted(sum(s.values()) for s in slices)
+for share in slices:
+    print("%.0f s, percent of one core: %s, together %.1f" % (
+        seconds, ", ".join("%s %.1f" % kv for kv in sorted(share.items())), sum(share.values())))
+print("middle slice %.1f (limit %g)" % (totals[1], limit))
+missing = [name for name in MUST if name not in seen]
+if missing:
+    print("not running:", ", ".join(missing))
+sys.exit(totals[1] >= limit or bool(missing))
+PY
+}
+wait_for 240 calm || say "NOTE the machine was still busy when the idle cost was measured"
+sleep 30
+check idle-cpu idle_share
+say "NOTE $(tr '\n' ' ' </tmp/smoke.idle-cpu.log)"
+
+# The package. Bombadil is a pacman package on the stick and on an installed system alike, so every mode runs
+# these: what it owns, that its commands are links and not loose copies, what it turned on, and what it changed
+# in files other packages own.
+# prints WANT COMMAND...: the command prints WANT (is-enabled exits non-zero for "disabled", so its words are read).
+prints() { local want=$1 got; shift; got=$("$@" 2>&1); echo "$got"; [[ "$got" == "$want" ]]; }
+# pacman -Qo warns on stderr about sync databases the image deleted; only its answer counts.
+owned_by_bombadil() { local o; o=$(pacman -Qoq "$1" 2>/dev/null); echo "$1: $o"; [[ "$o" == bombadil ]]; }
+package_complete() { local o rc; o=$(pacman -Qk bombadil 2>&1); rc=$?; echo "$o"; (( rc == 0 )) && grep -q ' 0 missing files' <<<"$o"; }
+# The old image linked every command into the local bin directory. The path is written in two parts because a test
+# holds that nothing the package ships names that directory.
+nothing_loose_in_local_bin() { local top=/usr o; o=$(find "$top/local/bin" -maxdepth 1 \( -name 'bombadil*' -o -name agentd \) 2>/dev/null); echo "${o:-none}"; [[ -z "$o" ]]; }
+version_has_its_shape() {
+  local o re='^Bombadil [0-9]{4}\.[0-9]{2}\.[0-9]{2} \([^)]+\)'
+  o=$(as_user bombadil version 2>&1); echo "$o"; [[ "$o" =~ $re ]]
+}
+repo_above_core() { awk '/^\[bombadil\]/ { b = NR } /^\[core\]/ { c = NR } END { exit !(b && c && b < c) }' /etc/pacman.conf; }
+repo_has_its_servers() { local o; o=$(pacman-conf -r bombadil Server 2>&1); echo "$o"; grep -qx 'file:///var/lib/bombadil/repo' <<<"$o"; }
+# Where the image was built is a path on another machine: nothing under /etc may still name it.
+no_build_path_in_etc() { local o; o=$(grep -rIl /tmp/bombadil-work /etc 2>/dev/null); echo "${o:-none}"; [[ -z "$o" ]]; }
+# pacman reads the copy on the image as the user alpm, which has to get through every directory on the way.
+repo_db_readable_by_everyone() {
+  local m; m=$(stat -L -c %a /var/lib/bombadil/repo/bombadil.db 2>&1); echo "mode $m"
+  [[ "$m" =~ ^[0-7]+$ ]] && (( m % 10 >= 4 )) && as_user test -r /var/lib/bombadil/repo/bombadil.db
+}
+# The units the package turns on once (usr/share/bombadil/enable.system and enable.user), and the ledger that says it did.
+ledger=/var/lib/bombadil/enabled-units
+six_units=("system bombadil-brain-watch.service" "system bombadil-connect.service" "system bombadil-smoke.service"
+           "user bombadil-brain.service" "user bombadil-browserd.service" "user bombadil-mail.service")
+ledger_has_the_six() { local got want; got=$(sort "$ledger" 2>&1); want=$(printf '%s\n' "${six_units[@]}" | sort); echo "$got"; [[ "$got" == "$want" ]]; }
+# unit_checks PREFIX [UNIT]: the package's units are as it left them. UNIT is one that was turned off by hand: it still is.
+# bombadil-agentd and bombadil-shell have no [Install] section (Hyprland starts them), so they read "static".
+unit_checks() {
+  local p=$1 off=${2:-} u
+  for u in bombadil-brain-watch bombadil-connect bombadil-smoke; do
+    check "$p-system-unit-$u-enabled" prints enabled systemctl is-enabled "$u.service"
+  done
+  for u in bombadil-brain bombadil-browserd bombadil-mail; do
+    if [[ "$u.service" == "$off" ]]; then check "$p-user-unit-$u-stays-off" prints disabled as_user systemctl --user is-enabled "$u.service"
+    else check "$p-user-unit-$u-enabled" prints enabled as_user systemctl --user is-enabled "$u.service"; fi
+  done
+  for u in bombadil-agentd bombadil-shell; do check "$p-user-unit-$u-static" prints static as_user systemctl --user is-enabled "$u.service"; done
+}
+greetd_runs_the_packages_config() { local o; o=$(systemctl show -p ExecStart greetd 2>&1); echo "$o"; grep -qF /usr/share/bombadil/greetd/config.toml <<<"$o"; }
+os_release_has_the_logo() { grep -hxE 'LOGO="?bombadil"?' /usr/lib/os-release /etc/os-release 2>/dev/null | grep -q .; }
+# Hyprland has the binds of Bombadil's part: Super+Return, Alt+Space and the release binds the Super tap needs.
+bombadil_binds() {
+  hypr_json binds | python3 -c 'import json, sys
+b = json.load(sys.stdin)
+keys = {x.get("key", "").lower() for x in b}
+print(sorted(keys), [x.get("key") for x in b if x.get("release")])
+sys.exit(not (any(x.get("release") for x in b) and {"return", "space", "escape"} <= keys))'
+}
+hypr_loads_the_part() { grep -qF 'pcall(require, "/usr/share/bombadil/share/hypr/bombadil")' /home/user/.config/hypr/hyprland.lua; }
+
+check package-owns-share-agentd owned_by_bombadil /usr/share/bombadil/bin/agentd
+check package-owns-usr-bin-agentd owned_by_bombadil /usr/bin/agentd
+check package-owns-installer owned_by_bombadil /usr/bin/bombadil-install
+check package-owns-user-unit owned_by_bombadil /usr/lib/systemd/user/bombadil-agentd.service
+check package-owns-sudoers owned_by_bombadil /etc/sudoers.d/bombadil
+check package-owns-hyprland-skel owned_by_bombadil /etc/skel/.config/hypr/hyprland.lua
+check package-no-missing-files package_complete
+check package-agentd-is-a-link test -L /usr/bin/agentd
+check package-nothing-loose-in-local-bin nothing_loose_in_local_bin
+check package-version-line version_has_its_shape
+check package-repo-above-core repo_above_core
+check package-repo-has-its-servers repo_has_its_servers
+check package-no-build-path-in-etc no_build_path_in_etc
+check package-repo-db-readable-by-everyone repo_db_readable_by_everyone
+unit_checks package
+check package-ledger-has-the-six-units ledger_has_the_six
+check package-greetd-runs-the-packages-config greetd_runs_the_packages_config
+check package-os-release-logo os_release_has_the_logo
+check package-browser-env grep -qx 'BROWSER=/usr/bin/bombadil-browser' /etc/environment
+check package-sudoers-mode prints 440 stat -c %a /etc/sudoers.d/bombadil
+# agentd moves the home's hyprland.lua to the stub a moment after login (homefix), and Hyprland reloads it.
+check package-hypr-part-loaded wait_for 60 hypr_loads_the_part
+check package-hypr-binds wait_for 30 bombadil_binds
+check package-hypr-config-clean wait_for 30 no_config_errors
+
+# What the installer must refuse, and what it must do, from the live system (a USB-attached ISO is /dev/sda
+# when the host attaches it that way; a CD has no disk, and the check is then skipped).
+stick=$(lsblk -dnro NAME,TYPE,TRAN | awk '$2 == "disk" && $3 == "usb" { print "/dev/" $1; exit }')
+stick_refused() { local o; o=$(bombadil-install "$stick" --yes 2>&1) && return 1; grep -q 'is the USB stick Bombadil started from' <<<"$o"; }
+no_uefi_needed() { [[ -d /sys/firmware/efi ]]; }
+
+cmdline_installed="console=tty0 console=ttyS0,115200 bombadil.smoke=$installed_mode"
+
+if [[ "$mode" == "install" ]]; then
+  [[ -z "$stick" ]] || check install-refuses-the-stick stick_refused
+  check install bash -c "BOMBADIL_INSTALL_CMDLINE='$cmdline_installed' bombadil-install /dev/vda --yes"
+fi
+
+if [[ "$mode" == "install-encrypted" ]]; then
+  check booted-in-uefi no_uefi_needed
+  [[ -z "$stick" ]] || check install-refuses-the-stick stick_refused
+  # What the stick's home folder has: the sign-in comes along; Apps is on the carry list but not in this plan
+  # (the installed system's own checks make an app in ~/Apps, so what is looked for is the stick's demo).
+  mkdir -p /home/user/.claude /home/user/Apps/demo /home/user/Notes
+  echo stick-login >/home/user/.claude/credentials.json; echo x >/home/user/Apps/demo/app.qml; echo x >/home/user/Notes/n.txt
+  chown -R user: /home/user/.claude /home/user/Apps /home/user/Notes
+  cat >/tmp/smoke-plan.json <<'PLAN'
+{"disk": "/dev/vda", "timezone": "Europe/Lisbon", "timezone_source": "detected", "hostname": "smoke-laptop", "keymap": "us",
+ "carry": [".claude", ".config/bombadil"]}
+PLAN
+  check install-encrypted bash -c "BOMBADIL_INSTALL_GRUB_SERIAL=1 BOMBADIL_INSTALL_CMDLINE='$cmdline_installed' \
+    bombadil-install --plan /tmp/smoke-plan.json --password-fd 3 3< <(printf '%s\n' 'correct-horse-battery-staple')"
+fi
+
+# A line of the person's own at the end of the old Hyprland config. The old file holds Bombadil's part and the
+# person's lines together; the refreshed system's homefix has to keep this one through the split (refresh-homefix-*).
+smoke_user_line="hl.bind(\"SUPER + F9\", hl.dsp.exec_cmd(\"true\")) -- smoke: a line of the person's"
+
+if [[ "$mode" == "refresh" ]]; then
+  # The disk was installed by an older Bombadil. Put things in its home folder that a refresh must keep, and
+  # things in its system that only belong to it, then refresh.
+  plant() {
+    local top=/run/smoke-top
+    mkdir -p "$top"
+    mount -o subvolid=5 /dev/vda2 "$top" || return 1
+    echo planted >"$top/@home/user/.bombadil-refresh-marker"
+    printf '\n%s\n' "$smoke_user_line" >>"$top/@home/user/.config/hypr/hyprland.lua" || { umount "$top"; return 1; }
+    # A value the person changed inside Bombadil's own hl.config call (every version Bombadil shipped has this
+    # line): the split has to carry it as an hl.config call of its own, and Hyprland has to run with it.
+    { sed -i 's/^\( *\)rounding = 12,$/\1rounding = 5,/' "$top/@home/user/.config/hypr/hyprland.lua" \
+        && grep -qx ' *rounding = 5,' "$top/@home/user/.config/hypr/hyprland.lua"; } || { umount "$top"; return 1; }
+    mkdir -p "$top/@home/user/.claude" "$top/@home/user/Projects/demo"
+    echo home-login >"$top/@home/user/.claude/credentials.json"
+    echo code >"$top/@home/user/Projects/demo/main.py"
+    echo old-machine >"$top/@/etc/hostname"
+    echo old-system >"$top/@/etc/bombadil-old-marker"
+    chown -R 1000:1000 "$top/@home/user/.claude" "$top/@home/user/Projects" "$top/@home/user/.bombadil-refresh-marker"
+    umount "$top"
+  }
+  check refresh-plant plant
+  # The stick has a sign-in of its own, which must not replace the home folder's.
+  mkdir -p /home/user/.claude; echo stick-login >/home/user/.claude/credentials.json; chown -R user: /home/user/.claude
+  check refresh-runs bash -c "BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200 bombadil.smoke=refreshed' bombadil-install --refresh /dev/vda --yes"
+fi
+
+# The undo, the refresh and the update each end their first boot by restarting the machine. The second boot is told
+# by a file in the home folder, which the undo does not roll back.
+phase=/home/user/.bombadil-smoke-phase
+reboot_for_phase_two() {
+  echo 2 > "$phase"; chown user: "$phase"
+  say "REBOOT pass=$ok fail=$fail"
+  [[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl reboot
+  exit 0
+}
+
+# The shape of an installed disk (layout 1), from inside the installed system.
+layout_checks() {
+  local enc
+  enc=$(python3 -c 'import json; print(json.load(open("/var/lib/bombadil/install.json"))["encrypted"])' 2>/dev/null)
+  check layout-record python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["layout"] == 1, d'
+  mount_is() { findmnt -no FSTYPE,OPTIONS "$1" | grep -Eq "^$2 .*subvol=/$3(,|\$)"; }
+  check layout-root mount_is / btrfs @
+  check layout-home mount_is /home btrfs @home
+  check layout-snapshots mount_is /.snapshots btrfs @snapshots
+  check layout-log mount_is /var/log btrfs @log
+  check layout-pkg mount_is /var/cache/pacman/pkg btrfs @pkg
+  check layout-efi bash -c '[[ "$(findmnt -no FSTYPE /efi)" == vfat ]]'
+  check layout-boot-in-root bash -c '! mountpoint -q /boot && test -s /boot/vmlinuz-linux && test -s /boot/initramfs-linux.img && test -s /boot/initramfs-linux-fallback.img'
+  check layout-grub-on-efi bash -c 'test -s /efi/EFI/BOOT/BOOTX64.EFI && test -s /efi/grub/grub.cfg && grep -q "/@/boot/vmlinuz-linux" /efi/grub/grub.cfg'
+  check layout-snapper bash -c 'snapper list-configs | grep -qw root && snapper list-configs | grep -qw home && snapper -c root --csvout get-config | grep -q "^NUMBER_LIMIT,30"'
+  check layout-home-subvolumes bash -c 'for d in .cache .claude .codex .config/chromium Projects; do btrfs subvolume show "/home/user/$d" >/dev/null || exit 1; done'
+  check layout-time-sync systemctl is-enabled systemd-timesyncd
+  # The package's tmpfiles.d line makes the linger file; nothing else does.
+  check layout-linger bash -c 'loginctl show-user user -p Linger --value | grep -qx yes && test -e /var/lib/systemd/linger/user'
+  if [[ "$enc" == True ]]; then
+    check layout-encrypted bash -c 'cryptsetup status root | grep -q "type: *LUKS2"'
+    check layout-three-ways-in bash -c 'dev=$(cryptsetup status root | awk "/device:/ {print \$2}"); [[ "$(cryptsetup luksDump "$dev" | grep -cE "^ +[0-9]+: luks2")" == 3 ]]'
+    check layout-key-in-initramfs bash -c 'lsinitcpio /boot/initramfs-linux.img | grep -q etc/cryptsetup-keys.d/root.key'
+    check layout-recovery-key-waits bash -c 'test "$(stat -c %a /var/lib/bombadil/recovery-key)" = 600'
+    check layout-record-encrypted python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["encrypted"] and d["recovery_key_pending"] and d["timezone_source"] == "detected" and d["timezone"] == "Europe/Lisbon", d'
+    check layout-hostname bash -c '[[ "$(cat /etc/hostname)" == smoke-laptop ]]'
+    check layout-carry-list bash -c 'test "$(cat /home/user/.claude/credentials.json)" = stick-login && test ! -e /home/user/Apps/demo && test ! -e /home/user/Notes'
+  fi
+}
+
+if [[ "$mode" == "undo" ]]; then
+  if [[ ! -f "$phase" ]]; then
+    # The brain, where the watcher has btrfs to watch: every save is named by its writer (a
+    # turn's file is the machine's, a file you write is yours) and a rename keeps the thing.
+    # The watcher and the brain each need a moment, hence wait_for.
+    brain_says() { as_user bombadil brain why "$1" | tee /dev/stderr | grep -q "$2"; }
+    brain_watching() { as_user bombadil brain status --json | tee /dev/stderr | grep -q '"watching": true'; }
+    brain_id() { as_user bombadil brain focus --json "$1" | python3 -c 'import json, sys; print(json.load(sys.stdin)["thing"]["id"])'; }
+    same_id() { [[ -n "$brain_before" && "$(brain_id "$1" 2>/dev/null)" == "$brain_before" ]]; }
+    check brain-watch-active wait_for 60 systemctl is-active --quiet bombadil-brain-watch
+    check brain-service-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-brain
+    check brain-status wait_for 90 as_user bombadil brain status
+    check brain-watching wait_for 60 brain_watching
+    # The writer stays alive a moment after its save, so the watcher names it and its scope: a
+    # writer that has exited is named by its nearest live ancestor, which for a turn's own shell
+    # is agentd, and for `sudo -u` is root. `ask` waits for the turn to end, so it gets a timeout:
+    # a turn that never ends must fail this check, not hang the run.
+    check brain-turn-writes as_user timeout 90 bombadil ask '!echo hi > ~/brain-smoke-turn.txt; sleep 2'
+    check brain-why-turn wait_for 60 brain_says /home/user/brain-smoke-turn.txt "Made by the machine in turn [0-9]"
+    check brain-you-write as_user sh -c 'echo hi > ~/brain-smoke-you.txt; sleep 2'
+    check brain-why-you wait_for 60 brain_says /home/user/brain-smoke-you.txt "You made it"
+    brain_before=$(wait_for 30 brain_id /home/user/brain-smoke-you.txt 2>/dev/null | tail -1)
+    check brain-rename as_user mv /home/user/brain-smoke-you.txt /home/user/brain-smoke-moved.txt
+    check brain-rename-keeps-thing wait_for 60 same_id /home/user/brain-smoke-moved.txt
+    # The Brain window is an app of the kit (built in, from share/apps): with the kit here it
+    # opens from its drawer and loads without errors, on a brain that knows things by now.
+    if declare -F app_ok >/dev/null && [[ -f /usr/share/bombadil/share/apps/brain/main.qml ]]; then
+      check brain-window mcp_call open_app '{"name":"brain"}'
+      check brain-window-shown wait_for 60 special_shown app-brain
+      check brain-window-status wait_for 30 app_ok brain
+      shot brain
+    fi
+    check grub-menu-hidden grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub
+    layout_checks
+    check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
+    check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
+    check restore-point-has-a-kernel bash -c 'n=$(snapper -c root list --columns number | tail -n 1 | tr -d " "); test -s "/.snapshots/$n/snapshot/boot/vmlinuz-linux"'
+    check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'
+    # Every restore point is one snapper may prune, and the installed config keeps only 30.
+    check snapshot-is-prunable bash -c 'snapper -c root --jsonout list | grep -Eq "\"cleanup\": *\"number\""'
+    check snapshots-are-pruned bash -c 'grep -q "^NUMBER_LIMIT=\"30\"" /etc/snapper/configs/root && grep -q "^TIMELINE_CREATE=\"no\"" /etc/snapper/configs/root && systemctl is-enabled --quiet snapper-cleanup.timer'
+    check undo as_user bombadil undo
+    reboot_for_phase_two
+  fi
+  check undo-applied bash -c '! test -e /etc/bombadil-smoke-marker'
+  # The kernel that started is the one that goes with these modules: a restore point holds both.
+  check undo-kernel-matches-modules bash -c 'test -d "/usr/lib/modules/$(uname -r)" && modinfo -k "$(uname -r)" btrfs >/dev/null'
+  check undo-layout-kept bash -c 'findmnt -no OPTIONS / | grep -Eq "subvol=/@(,|$)" && test -s /boot/vmlinuz-linux'
+  rm -f "$phase"
+fi
+
+# The update (docs/contributing/vm-testing.md). The host serves a newer build of the package at 10.0.2.2:8123 (scripts/test-vm.sh),
+# and pacman installs it as the machine's own update does. The VM has no route to the Arch mirrors, so this run's
+# pacman.conf holds the [options] of the real one and only the [bombadil] section. The restore point comes first and the
+# unit is turned off after it, so the undo that ends the run takes both back. The second boot checks that the old
+# build is back; what the first boot saw is kept in the home folder for it, which the undo does not roll back.
+if [[ "$mode" == "update" ]]; then
+  update_conf=/tmp/update-pacman.conf
+  was_file=/home/user/.bombadil-smoke-update-was
+  migrate_log=/var/log/bombadil-migrate.log
+  off_unit=bombadil-mail.service
+  version_now() { as_user bombadil version 2>&1; }
+  same_as() { echo "now: $1"; echo "was: $2"; [[ "$1" == "$2" ]]; }
+  host_serves_the_package() { python3 -c 'import urllib.request as u; u.build_opener(u.ProxyHandler({})).open("http://10.0.2.2:8123/bombadil.db", timeout=30).read(1)'; }
+  write_update_conf() {
+    awk '/^\[/ { options = ($0 == "[options]") } options' /etc/pacman.conf >"$update_conf" && grep -q '^\[options\]' "$update_conf" \
+      && printf '\n[bombadil]\nInclude = /etc/pacman.d/bombadil.conf\n' >>"$update_conf"
+  }
+  update_package() { local rc; pacman --config "$update_conf" -Syu --noconfirm >/tmp/update-pacman.log 2>&1; rc=$?; tail -n 25 /tmp/update-pacman.log; return $rc; }
+  # The commit of the served build ends in +update (scripts/test-vm.sh names it so).
+  version_is_the_served_build() { local o; o=$(version_now); echo "now: $o"; echo "was: $was_version"; [[ "$o" != "$was_version" && "$o" == *"+update)"* ]]; }
+  package_version_changed() { local o; o=$(pacman -Q bombadil 2>/dev/null); echo "now: $o"; echo "was: $was_package"; [[ "$o" != "$was_package" ]]; }
+  migrate_log_clean() { local new; new=$(tail -n +$(($1 + 1)) "$migrate_log" 2>/dev/null); echo "${new:-no new lines}"; ! grep -q FAILED <<<"$new"; }
+  ledger_unchanged() { local now; now=$(sort "$ledger"); echo "$now"; [[ "$now" == "$ledger_was" ]]; }
+  bar_answers() { line_state | python3 -c 'import json, sys; print(json.load(sys.stdin))'; }
+  if [[ ! -f "$phase" ]]; then
+    was_version=$(version_now); was_package=$(pacman -Q bombadil); ledger_was=$(sort "$ledger")
+    printf '%s\n%s\n' "$was_version" "$was_package" >"$was_file"; chown user: "$was_file"
+    check update-restore-point as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke update"))'
+    # A user unit is turned off for every user with --global (it is enabled there); `systemctl --user disable` would
+    # leave that link where it is.
+    check update-turn-a-unit-off systemctl --global disable "$off_unit"
+    check update-unit-is-off prints disabled as_user systemctl --user is-enabled "$off_unit"
+    check update-host-serves-the-package host_serves_the_package
+    check update-conf-written write_update_conf
+    log_lines=0; [[ -f "$migrate_log" ]] && log_lines=$(wc -l <"$migrate_log")
+    check update-pacman-runs update_package
+    check update-version-is-the-served-build version_is_the_served_build
+    check update-package-version-changed package_version_changed
+    check update-package-owns-agentd owned_by_bombadil /usr/bin/agentd
+    check update-package-no-missing-files package_complete
+    check update-agentd-is-a-link test -L /usr/bin/agentd
+    check update-migrate-log-clean migrate_log_clean "$log_lines"
+    check update-hyprland-runs pgrep -x Hyprland
+    check update-hypr-config-ok wait_for 30 no_config_errors
+    check update-bar-layer wait_for 60 has_layer bombadil-bar
+    check update-bar-answers wait_for 30 bar_answers
+    unit_checks update "$off_unit"
+    check update-ledger-unchanged ledger_unchanged
+    check update-ledger-has-the-six-units ledger_has_the_six
+    check update-undo as_user bombadil undo
+    reboot_for_phase_two
+  fi
+  mapfile -t old <"$was_file"
+  check update-undo-brought-the-old-version-back same_as "$(version_now)" "${old[0]:-}"
+  check update-undo-brought-the-old-package-back same_as "$(pacman -Q bombadil 2>/dev/null)" "${old[1]:-}"
+  check update-home-keeps-the-stub hypr_loads_the_part
+  check update-hypr-config-ok wait_for 30 no_config_errors
+  check update-bar-layer wait_for 60 has_layer bombadil-bar
+  rm -f "$phase" "$was_file"
+fi
+
+if [[ "$mode" == "refreshed" ]]; then
+  layout_checks
+  check refresh-kept-the-home-folder bash -c 'test "$(cat /home/user/.bombadil-refresh-marker)" = planted && test "$(cat /home/user/Projects/demo/main.py)" = code'
+  check refresh-kept-the-sign-in bash -c 'test "$(cat /home/user/.claude/credentials.json)" = home-login'
+  check refresh-home-is-the-users bash -c 'test "$(stat -c %u /home/user/.bombadil-refresh-marker)" = 1000 && test "$(stat -c %u /home/user)" = 1000'
+  check refresh-kept-the-computer-name bash -c 'test "$(cat /etc/hostname)" = old-machine'
+  check refresh-is-the-new-system bash -c '! test -e /etc/bombadil-old-marker'
+  check refresh-old-system-kept bash -c 'top=$(mktemp -d); mount -o subvolid=5 "$(findmnt -no SOURCE / | sed "s/\[.*//")" "$top" && ls -d "$top"/@.before-refresh-* >/dev/null && test -f "$top"/@.before-refresh-*/etc/bombadil-old-marker && test -s "$top"/@.before-refresh-*/boot/vmlinuz-linux; r=$?; umount "$top"; exit $r'
+  check refresh-record python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["mode"] == "refresh" and d["kept_aside"], d'
+  check refresh-home-restore-points bash -c 'snapper -c home list >/dev/null'
+  # agentd's homefix (it starts a moment after login, before the socket opens) moved the old hyprland.lua aside, put
+  # the stub in its place and kept the line the person had at the end of it.
+  lua=/home/user/.config/hypr/hyprland.lua
+  skel_lua=/etc/skel/.config/hypr/hyprland.lua
+  starts_with_the_stub() { cmp -n "$(stat -c %s "$skel_lua")" "$lua" "$skel_lua"; }
+  old_file_kept() { grep -qxF "$smoke_user_line" "$lua.before-split" && grep -q 'hyprland.start' "$lua.before-split"; }
+  homefix_recorded_step_one() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d["steps"]); sys.exit("1" not in d["steps"])' /home/user/.local/state/bombadil/home.json; }
+  check refresh-homefix-wrote-the-stub wait_for 90 starts_with_the_stub
+  check refresh-homefix-kept-the-old-file old_file_kept
+  check refresh-homefix-kept-the-persons-line grep -qxF "$smoke_user_line" "$lua"
+  # The changed value: carried as a call of its own (a line of code, not a comment), and the person's value is the
+  # one Hyprland runs with. The old file already had it when Hyprland first started, so the config is read again
+  # here (after the rewrite) to see that the split file gives it too. Bombadil's part says 12, so 5 is the person's,
+  # and a second hl.config call must set only that leaf: Bombadil's blur size (6, not Hyprland's 8) stays.
+  carried_config_value() { grep -qE '^ +rounding = 5,$' "$lua" && grep -qx 'hl.config({' "$lua"; }
+  hypr_reload() { local o; o=$(as_user hyprctl reload) && [[ "$o" == "" || "$o" == "ok" ]] || { echo "$o"; return 1; }; }
+  hypr_int_option() {
+    local o; o=$(as_user hyprctl -j getoption "$1") || return 1
+    python3 -c 'import json, sys; d = json.loads(sys.argv[1]); print(d); sys.exit(not any(d.get(k) == int(sys.argv[2]) for k in ("int", "float", "value")))' "$o" "$2"
+  }
+  config_values_are_merged() { hypr_int_option decoration:rounding 5 && hypr_int_option decoration:blur:size 6; }
+  check refresh-homefix-carried-the-persons-config-value carried_config_value
+  check refresh-homefix-hypr-reloads hypr_reload
+  check refresh-homefix-hypr-has-the-persons-config-value wait_for 30 config_values_are_merged
+  check refresh-homefix-recorded-step-one wait_for 90 homefix_recorded_step_one
+  check refresh-homefix-hypr-config-ok wait_for 30 no_config_errors
+  check refresh-homefix-left-the-sign-in bash -c 'test "$(cat /home/user/.claude/credentials.json)" = home-login'
+  # Put the old system back: the same GRUB then starts it, which the host sees as that system's own session coming up.
+  if [[ ! -f "$phase" ]]; then
+    check refresh-undo bombadil-rollback refresh
+    reboot_for_phase_two
+  fi
+fi
+
+say "DONE pass=$ok fail=$fail"
+[[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl poweroff

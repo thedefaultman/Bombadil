@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from . import apps, browser, dev, hypr, paths, remote, snapshots, sysmap
+from . import apps, browser, dev, hypr, paths, remote, snapshots, sysmap, version
 from .brain import client as brain_client
 from .brain import this
 from .connect.cardmake import SERVICE_TITLES
@@ -106,6 +106,8 @@ UTILITY_COMMANDS = {
     "remote": ["remote", "remote control", "start remote control", "remote session", "start a remote session"],
     "install": ["install", "install bombadil", "install on this computer", "install to disk", "install this"],
     "voice": ["voice"],   # agentd opens the name and voice card itself
+    # Which Bombadil this is, read from two small files with no model (version.py). It is typed, not completed.
+    "version": ["version", "what version is this", "what version", "which version"],
 }
 # The Mail window (a kit app that ships with Bombadil), and what people call it.
 MAIL_APP = "mail"
@@ -173,7 +175,7 @@ APP_WIDGETS = {w for w in WIDGETS if w in TIPS_COMMANDS}
 # Not offered as completions: Tab should never land on these by accident, and a question
 # is typed rather than completed.
 NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "volume_up", "volume_down", "mute", "unmute",
-               "why", "whyhere"}
+               "why", "whyhere", "version"}
 VOLUME_STEP = "5%"
 
 DETAILS_CLASS = "bombadil-details"
@@ -591,7 +593,8 @@ class Launcher:
                 "provider": f"Switching to {action.title or action.target}",
                 "volume_up": "Turning the volume up", "volume_down": "Turning the volume down",
                 "mute": "Muting the sound", "unmute": "Unmuting the sound",
-                "brain": "Opening the Brain", "whyhere": "Looking it up", "tips": "Opening Tips",
+                "brain": "Opening the Brain", "whyhere": "Looking it up", "version": "Looking it up",
+                "tips": "Opening Tips",
                 "desk": "Changing the desk", "widgets": "Opening the widgets",
                 "send": "Sending is yours"}.get(action.kind, "On it")
 
@@ -623,6 +626,7 @@ class Launcher:
                 "volume_up": "Could not change the volume", "volume_down": "Could not change the volume",
                 "mute": "Could not mute the sound", "unmute": "Could not unmute the sound",
                 "brain": "Could not open the Brain", "whyhere": "Could not look it up",
+                "version": "Could not look it up",
                 "tips": "Could not open Tips",
                 "desk": "Could not change the desk", "widgets": "Could not open the widgets"}.get(
                     action.kind, "That did not work")
@@ -845,6 +849,9 @@ class Launcher:
         except brain_client.BrainError as e:
             return False, _said(e) or f"{self.failed(a)}."
         return True, _said(answer) or "The brain does not know this yet."
+
+    def _version(self, a: Action) -> tuple[bool, str]:
+        return True, version.version_line()
 
     # -- undo --
 

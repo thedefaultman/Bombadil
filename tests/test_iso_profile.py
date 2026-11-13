@@ -1,14 +1,44 @@
 """What the ISO profile ships. The VM smoke proves a booted machine; these catch a dropped line sooner."""
 import os
 import re
+import subprocess
 from pathlib import Path
 
+from payload import HYPR_LUA, PAYLOAD
+
 ISO = Path(__file__).resolve().parent.parent / "iso"
+ROOT = ISO.parent
 
 
 def _packages() -> set[str]:
     return {line.strip() for line in (ISO / "packages.x86_64").read_text().splitlines()
             if line.strip() and not line.startswith("#")}
+
+
+def _enabled_units(kind: str) -> list[str]:
+    """The units the package turns on once, from its list: bombadil-install reads nothing of it, bombadil.install does."""
+    lines = (PAYLOAD / f"usr/share/bombadil/enable.{kind}").read_text().splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+
+
+def _git_mode(path: Path) -> str:
+    """The mode git holds for a tracked file ("100755"); the file's own mode when the tree is not a checkout."""
+    import subprocess
+    r = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-s", "--", str(path)], capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.split()[0]
+    return "100755" if os.access(path, os.X_OK) else "100644"
+
+
+def _assert_the_package_links_in_usr_bin(*names: str) -> None:
+    """The PKGBUILD links every command of bin/ into /usr/bin (a loop, so a new command needs no list), and
+    each of these is such a command: a file the tree ships, and one that can run."""
+    pkgbuild = (ROOT / "packaging/bombadil/PKGBUILD").read_text()
+    assert 'for f in "$pkgdir"/usr/share/bombadil/bin/*; do' in pkgbuild
+    assert 'ln -s "../share/bombadil/bin/${f##*/}" "$pkgdir/usr/bin/${f##*/}"' in pkgbuild
+    for name in names:
+        assert (ROOT / "bin" / name).is_file(), f"{name} is linked, but not in bin/"
+        assert _git_mode(ROOT / "bin" / name) == "100755", name
 
 
 def test_there_is_sound():
@@ -36,7 +66,7 @@ def test_pacman_has_an_active_mirror_and_the_agent_upgrades_as_it_installs():
 
 def _pill_binds():
     """The lua, and its binds that fire a global shortcut: {keys: (the shortcut, fires on release)}."""
-    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     # Anchored at the line start, so a commented-out bind does not count.
     binds = {}
     for m in re.finditer(r'^\s*hl\.bind\("([^"]+)", hl\.dsp\.global\("([^"]+)"\)(, \{ release = true \})?\)', lua, re.M):
@@ -79,7 +109,7 @@ def test_the_shortcuts_the_keys_fire_are_the_ones_the_bar_registers_on_the_edge_
     assert shell.count("PillKeys {") == 1 and shell.index("PillKeys {") < shell.index("Variants {")
     assert re.search(r"Loader \{\s*active: root\.hyprland\s*sourceComponent: PillKeys \{ pill: pillState \}", shell)
     # The VM smoke asks Hyprland whether the bar registered them before it taps a key.
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     assert all(f"'{shortcut}'" in smoke for shortcut in registered) and "hyprctl globalshortcuts" in smoke
     assert smoke.index("check pill-shortcuts-registered") < smoke.index("keys meta_l")
 
@@ -87,13 +117,13 @@ def test_the_shortcuts_the_keys_fire_are_the_ones_the_bar_registers_on_the_edge_
 def test_hyprland_does_not_slide_the_bar_when_a_picture_resizes_it():
     # The bar is a layer that is resized whenever a picture appears or grows. With Hyprland's default
     # "layers" animation the pill dipped and swung back for half a second each time.
-    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     assert re.search(r'^\s*hl\.animation\(\{ leaf = "layers", enabled = false \}\)', lua, re.M)
 
 
 def test_super_return_opens_a_terminal_that_does_not_belong_to_the_drawer_showing():
     # A plain `foot` opens inside the drawer that shows (a special workspace) and goes with it.
-    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     assert re.search(r'^\s*hl\.bind\("SUPER \+ Return", hl\.dsp\.exec_cmd\("bombadil terminal"\)\)', lua, re.M)
     assert '"SUPER + Return", hl.dsp.exec_cmd("foot")' not in lua
 
@@ -130,22 +160,39 @@ def test_the_image_is_built_without_erofs_tail_packing():
     assert "ztailpacking" not in options
 
 
+def test_the_image_version_and_label_are_the_utc_day_and_month_in_every_time_zone():
+    # The package the image carries is named with the UTC day of the same build time, and scripts/test-vm.sh reads that
+    # day off the image's file name: a host west of UTC must not move either. 2026-12-01 00:20 UTC is still 30 November
+    # ten hours west.
+    for zone in ("UTC", "UTC+10", "UTC-12"):
+        r = subprocess.run(["bash", "-c", 'declare -A file_permissions; source "$1"; echo "$iso_version $iso_label"', "_",
+                            str(ISO / "profiledef.sh")], capture_output=True, text=True, check=True,
+                           env={"PATH": "/usr/bin:/bin", "TZ": zone, "SOURCE_DATE_EPOCH": "1796084400"})
+        assert r.stdout == "2026.12.01 BOMBADIL_202612\n", zone
+
+
 def test_the_build_reads_the_image_back_and_compares_it_with_its_tree():
     script = (ISO.parent / "scripts/build-iso.sh").read_text()
     assert "verify_image" in script and "diff -rq" in script
 
 
-def test_every_script_the_image_adds_to_the_path_or_to_grub_is_executable():
-    # mkarchiso copies airootfs without modes, so a script that is not listed in file_permissions is not runnable
-    # (and grub-mkconfig skips a file in /etc/grub.d that is not executable).
+def test_every_script_the_package_adds_to_the_path_or_to_grub_is_executable_in_git():
+    # The package keeps the executable bit git holds (git has 644 and 755 only), and the image lists no modes for
+    # these any more. grub-mkconfig skips a file in /etc/grub.d that is not executable.
+    for folder in (PAYLOAD / "usr/bin", PAYLOAD / "etc/grub.d", PAYLOAD / "usr/share/bombadil/migrate"):
+        scripts = [p for p in folder.iterdir() if p.is_file() and (folder.name != "migrate" or p.name == "run"
+                                                                    or re.fullmatch(r"\d{3}-.*\.sh", p.name))]
+        assert scripts, folder
+        assert [p.name for p in scripts if _git_mode(p) != "100755"] == [], folder
+    # What stays in the image's own tree is listed for mkarchiso, which copies airootfs without modes.
     profiledef = (ISO / "profiledef.sh").read_text()
-    listed = set(re.findall(r'\["(/[^"]+)"\]="0:0:755"', profiledef))
-    for folder in ("usr/local/bin", "etc/grub.d"):
-        shipped = {f"/{folder}/{p.name}" for p in (ISO / "airootfs" / folder).iterdir() if p.is_file()}
-        assert shipped <= listed, sorted(shipped - listed)
+    listed = set(re.findall(r'\["(/[^"]+)"\]="0:0:\d+"', profiledef))
+    assert {"/usr/lib/node_modules/@anthropic-ai/", "/usr/lib/node_modules/@openai/"} <= listed
+    # Nothing the package owns is listed there: its modes come from the package.
+    assert [p for p in listed if p.startswith(("/usr/local/bin", "/usr/share/bombadil", "/etc/sudoers.d", "/etc/grub.d"))] == []
 
 
-USER_UNITS = ISO / "airootfs/etc/systemd/user"
+USER_UNITS = PAYLOAD / "usr/lib/systemd/user"
 
 
 def _unit(path: Path) -> dict[str, dict[str, str]]:
@@ -174,12 +221,12 @@ def test_the_daemon_and_the_bar_come_back_when_they_die():
         assert "StartLimitIntervalSec" not in u["Service"], path.name
     # Apps the agent started keep running when only the daemon restarts.
     assert _unit(units[0])["Service"]["KillMode"] == "process"
-    assert _unit(units[0])["Service"]["ExecStart"] == "/usr/local/bin/agentd"
-    assert _unit(units[1])["Service"]["ExecStart"] == "/usr/local/bin/bombadil-shell"
+    assert _unit(units[0])["Service"]["ExecStart"] == "/usr/bin/agentd"
+    assert _unit(units[1])["Service"]["ExecStart"] == "/usr/bin/bombadil-shell"
 
 
 def test_the_session_starts_them_after_handing_over_its_environment():
-    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     start = lua[lua.index('hl.on("hyprland.start"'):].split("\nend)")[0]
     # WAYLAND_DISPLAY and the Hyprland signature exist only in the session, not in the user manager.
     assert start.index("import-environment") < start.index("restart bombadil-agentd bombadil-shell")
@@ -189,14 +236,14 @@ def test_the_session_starts_them_after_handing_over_its_environment():
 
 
 def test_setup_and_the_cli_restart_the_daemon_through_systemd():
-    setup = (ISO / "airootfs/usr/local/bin/bombadil-setup").read_text()
+    setup = (PAYLOAD / "usr/bin/bombadil-setup").read_text()
     assert "systemctl --user restart bombadil-agentd" in setup and "pkill" not in setup
     cli = (ISO.parent / "bin/bombadil").read_text()
     assert "systemctl --user restart bombadil-agentd" in cli
 
 
 def test_the_installed_system_prunes_its_restore_points_and_takes_no_hourly_ones():
-    install = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    install = (PAYLOAD / "usr/bin/bombadil-install").read_text()
     assert "set-config TIMELINE_CREATE=no NUMBER_CLEANUP=yes NUMBER_LIMIT=30" in install
     assert re.search(r"^systemctl enable .*\bsnapper-cleanup\.timer\b", install, re.M)
     # The config has to exist before it is changed.
@@ -206,7 +253,7 @@ def test_the_installed_system_prunes_its_restore_points_and_takes_no_hourly_ones
 def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_boot_medium():
     # With copytoram (a USB stick with RAM to spare) /run/archiso/bootmnt is gone by the time the
     # kernel is copied, which used to stop the script after the disk was wiped and copied.
-    install = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    install = (PAYLOAD / "usr/bin/bombadil-install").read_text()
     assert "bootmnt" not in install
     assert 'install -Dm644 "$kernel" "$target/boot/vmlinuz-linux"' in install
     # It is found, and checked, before the disk is erased.
@@ -215,7 +262,7 @@ def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_b
 
 def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_after_a_reboot_too():
     import re
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     host = (ISO.parent / "scripts/test-vm.sh").read_text()
     assert 'say "KEYS $bootid-$nkeys $*"' in smoke and "/proc/sys/kernel/random/boot_id" in smoke
     pattern = re.search(r'grep -ao "(BOMBADIL-SMOKE: KEYS [^"]*)"', host).group(1)
@@ -226,7 +273,7 @@ def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_af
 
 def test_the_smokes_sign_in_block_never_runs_where_a_provider_is_already_chosen():
     # It picks other providers, cancels their logins and deletes the config file at its end.
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     gate = 'if [[ "$mode" =~ ^(install|live|)$ && ! -e "$signin_config" ]]; then'
     assert 'signin_config=/home/user/.config/bombadil/config.toml' in smoke and gate in smoke
     assert smoke.index(gate) < smoke.index("check signin-agentd-starts") < smoke.index("rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml")
@@ -239,7 +286,7 @@ def test_the_smokes_sign_in_block_never_runs_where_a_provider_is_already_chosen(
 def _run_gate(home, with_config):
     """The gate's own lines, run in bash against a home with or without a config file."""
     import subprocess
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     start = smoke.index("signin_config=")
     end = smoke.index(": >/tmp/smoke.agentd.log")
     home.mkdir()
@@ -259,7 +306,7 @@ def test_the_gate_skips_with_a_config_and_runs_without_one(tmp_path):
 
 
 def test_the_smoke_replaces_agentd_through_its_unit_and_checks_the_units_with_a_function():
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     # systemd starts a killed agentd again in the normal environment, so the smoke's own agentd
     # (another provider, a fake login) needs the unit stopped first, and the unit back after.
     restart = smoke[smoke.index("restart_agentd() {"):smoke.index("page_or_offline()")]
@@ -272,39 +319,29 @@ def test_the_smoke_replaces_agentd_through_its_unit_and_checks_the_units_with_a_
 
 # -- Mail (docs/MAIL.md): Thunderbird as the unseen engine, and the service in front of it --
 
-ROOT = ISO.parent
-
-
 def test_thunderbird_is_on_the_image():
     assert "thunderbird" in _packages()
 
 
 def test_thunderbird_is_told_not_to_update_itself_or_report_or_ask_to_be_the_default_mail_program():
     import json
-    policy = json.loads((ISO / "airootfs/etc/thunderbird/policies/policies.json").read_text())["policies"]
+    policy = json.loads((PAYLOAD / "etc/thunderbird/policies/policies.json").read_text())["policies"]
     assert policy == {"DisableAppUpdate": True, "DisableTelemetry": True, "DontCheckDefaultClient": True}
 
 
 def test_the_mail_service_is_a_user_unit_that_starts_at_login_and_is_never_given_up_on():
-    units = ISO / "airootfs/etc/systemd/user"
-    unit = (units / "bombadil-mail.service").read_text()
-    assert re.search(r"^ExecStart=/usr/local/bin/bombadil-mail$", unit, re.MULTILINE)
+    unit = (USER_UNITS / "bombadil-mail.service").read_text()
+    assert re.search(r"^ExecStart=/usr/bin/bombadil-mail$", unit, re.MULTILINE)
     assert re.search(r"^Restart=on-failure$", unit, re.MULTILINE)
     # Five quick failures (a locked disk at login) would otherwise leave mail stopped until the next login.
     assert re.search(r"^StartLimitIntervalSec=0$", unit, re.MULTILINE)
     assert re.search(r"^WantedBy=default\.target$", unit, re.MULTILINE)
-    link = units / "default.target.wants/bombadil-mail.service"
-    assert link.is_symlink() and os.readlink(link) == "../bombadil-mail.service"
-    assert (link.parent / os.readlink(link)).resolve().is_file()
+    # Turned on by the package's own list, once, not by a link in the image.
+    assert "bombadil-mail.service" in _enabled_units("user")
 
 
-def test_the_build_links_mails_commands_into_usr_local_bin():
-    build = (ROOT / "scripts/build-iso.sh").read_text()
-    names = re.search(r"^for b in ([^;]+); do$", build, re.MULTILINE).group(1).split()
-    assert {"bombadil-mail", "bombadil-mail-host"} <= set(names)
-    # Each link points at a file the tree ships (the loop's other names are checked here too).
-    assert [n for n in names if not (ROOT / "bin" / n).is_file()] == [], "linked, but not in bin/"
-    assert 'ln -sfn "/usr/share/bombadil/bin/$b" "$profile/airootfs/usr/local/bin/$b"' in build
+def test_the_package_links_mails_commands_into_usr_bin():
+    _assert_the_package_links_in_usr_bin("bombadil-mail", "bombadil-mail-host")
 
 
 def test_the_mail_skill_reaches_both_clis():
@@ -312,7 +349,7 @@ def test_the_mail_skill_reaches_both_clis():
     assert skill.startswith("---\nname: bombadil-mail\ndescription: ")
     for tool in ("mail_search", "mail_read", "mail_mark", "mail_draft", "mail_show"):
         assert tool in skill
-    skel = ISO / "airootfs/etc/skel"
+    skel = PAYLOAD / "etc/skel"
     for where in (".claude/skills", ".agents/skills"):
         link = skel / where / "bombadil-mail"
         assert link.is_symlink() and os.readlink(link) == "/usr/share/bombadil/share/skills/bombadil-mail"
@@ -350,7 +387,7 @@ def test_the_mail_skill_never_tells_the_agent_to_do_what_only_the_person_may():
 
 
 def test_the_mail_skill_is_in_the_users_home_on_the_built_image():
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     assert ("check mail-skill-installed as_user test -f /home/user/.claude/skills/bombadil-mail/SKILL.md "
             "-a -f /home/user/.agents/skills/bombadil-mail/SKILL.md") in smoke
 
@@ -369,7 +406,7 @@ def _lua_string(source: str) -> str:
 
 
 def test_thunderbirds_windows_go_silently_to_a_workspace_nobody_opens():
-    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     rule = re.search(r'^hl\.window_rule\(\{ name = "mail-engine", match = \{ class = "([^"]+)" \}, '
                      r'workspace = "([^"]+)" \}\)$', lua, re.MULTILINE)
     assert rule, "no mail-engine window rule"
@@ -398,7 +435,7 @@ def test_thunderbirds_windows_go_silently_to_a_workspace_nobody_opens():
 
 def test_the_session_hands_the_mail_unit_its_screen_before_thunderbird_needs_one():
     # The unit starts at login, before Hyprland has a screen; Thunderbird needs WAYLAND_DISPLAY.
-    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     start = lua[lua.index('hl.on("hyprland.start"'):lua.index("hl.config(")]
     assert "systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE" in start
     assert "systemctl --user restart bombadil-mail.service" in start
@@ -406,7 +443,7 @@ def test_the_session_hands_the_mail_unit_its_screen_before_thunderbird_needs_one
 
 def test_the_smoke_test_covers_mail_and_parses():
     import subprocess
-    smoke = ISO / "airootfs/usr/local/bin/bombadil-smoke"
+    smoke = PAYLOAD / "usr/bin/bombadil-smoke"
     subprocess.run(["bash", "-n", str(smoke)], check=True)
     text = smoke.read_text()
     for name in ("mail-tools-installed", "mail-unit-enabled", "mail-unit-answers", "mail-engine-window-hidden",
@@ -422,8 +459,8 @@ def test_the_smoke_test_covers_mail_and_parses():
 
 NOTIFICATION_DAEMONS = {"mako", "makoctl", "dunst", "swaync", "fnott", "xfce4-notifyd", "notification-daemon",
                         "mate-notification-daemon", "notify-osd"}
-SYSTEM_UNITS = ISO / "airootfs/etc/systemd/system"
-USER_UNITS = ISO / "airootfs/etc/systemd/user"
+SYSTEM_UNITS = PAYLOAD / "usr/lib/systemd/system"
+USER_UNITS = PAYLOAD / "usr/lib/systemd/user"
 
 
 def _unit_keys(path: Path) -> dict[str, dict[str, list[str]]]:
@@ -442,10 +479,6 @@ def _unit_keys(path: Path) -> dict[str, dict[str, list[str]]]:
     return sections
 
 
-def _enabled_by(link: Path, unit: str) -> bool:
-    return link.is_symlink() and os.readlink(link) == f"../{unit}" and (link.parent / os.readlink(link)).resolve().is_file()
-
-
 def test_the_image_has_what_connections_run_on_and_no_notification_daemon():
     packages = _packages()
     # wl-clipboard is for "Copy and open" on a card from a notification, libnotify for notify-send.
@@ -456,25 +489,29 @@ def test_the_image_has_what_connections_run_on_and_no_notification_daemon():
 def test_nothing_on_the_image_starts_or_configures_a_notification_daemon():
     # The shell's NotificationServer owns org.freedesktop.Notifications; a second owner would take web pages'
     # notifications from the line above the pill (mako, which this replaced, would have won the race at login).
-    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     started = re.findall(r'^\s*hl\.exec_cmd\("([^"]+)"', lua, re.MULTILINE)
     # The session restarts the daemon and the bar as user services (docs/SESSION-SERVICES.md): the bar is the only
     # thing that owns the notification name, and it starts there.
     assert any(c.startswith("systemctl --user") and "restart" in c.split() and "bombadil-shell" in c.split()
                for c in started)
     assert [c for c in started if c.split()[0] in NOTIFICATION_DAEMONS] == []
-    assert not (ISO / "airootfs/etc/skel/.config/mako").exists()
-    shipped = [p for tree in ("etc/skel/.config", "etc/systemd", "etc/xdg", "etc/greetd") for p in
-               (ISO / "airootfs" / tree).rglob("*") if p.is_file() and not p.is_symlink()]
+    assert not (PAYLOAD / "etc/skel/.config/mako").exists()
+    # The package's config, its units and greetd's, the live image's own units, and Bombadil's part of the Hyprland
+    # config. (share/hypr/old holds lines that older versions of the file had, for homes that still have them.)
+    trees = [PAYLOAD / "etc/skel/.config", PAYLOAD / "usr/lib/systemd", PAYLOAD / "etc/xdg",
+             PAYLOAD / "usr/share/bombadil/greetd", ISO / "airootfs/etc/systemd"]
+    shipped = [p for tree in trees for p in tree.rglob("*") if p.is_file() and not p.is_symlink()]
+    shipped += [p for p in (ROOT / "share/hypr").glob("*") if p.is_file()]
     assert shipped
     DAEMON_WORD = r"\b(" + "|".join(NOTIFICATION_DAEMONS) + r")\b"
-    named = [p.relative_to(ISO).as_posix() for p in shipped
+    named = [p.relative_to(ROOT).as_posix() for p in shipped
              if re.search(DAEMON_WORD,
                           "\n".join(line for line in p.read_text().splitlines()
                                     if not line.lstrip().startswith(("#", "--"))))]
     assert named == []
     # Nor a D-Bus service file that makes the bus start one when something asks for the name.
-    assert [p for p in ISO.rglob("*") if "org.freedesktop.Notifications" in p.name] == []
+    assert [p for tree in (ISO, PAYLOAD) for p in tree.rglob("*") if "org.freedesktop.Notifications" in p.name] == []
 
 
 def test_the_connection_service_is_a_system_unit_of_its_own_user_with_a_closed_state_directory(monkeypatch):
@@ -489,7 +526,7 @@ def test_the_connection_service_is_a_system_unit_of_its_own_user_with_a_closed_s
         return service[key][0]
 
     assert one("User") == "bombadil-connect"
-    assert one("ExecStart") == "/usr/local/bin/bombadil-connect"
+    assert one("ExecStart") == "/usr/bin/bombadil-connect"
     assert one("StateDirectory") == "bombadil-connect" and one("StateDirectoryMode") == "0700"
     # connect.sock is 0666 (the service checks each peer's uid itself), so the person has to be able to walk to it.
     assert one("RuntimeDirectory") == "bombadil-connect" and one("RuntimeDirectoryMode") == "0755"
@@ -512,14 +549,14 @@ def test_the_connection_service_is_a_system_unit_of_its_own_user_with_a_closed_s
     assert paths.connect_state() == Path("/var/lib") / one("StateDirectory")
     assert "BOMBADIL_CONNECT_ENGINE" not in env, "the image runs the real engine"
     assert unit["Install"]["WantedBy"] == ["multi-user.target"]
-    assert _enabled_by(SYSTEM_UNITS / "multi-user.target.wants/bombadil-connect.service", "bombadil-connect.service")
+    assert "bombadil-connect.service" in _enabled_units("system")
 
 
 def test_the_connection_service_user_is_a_system_account_that_cannot_log_in_and_has_no_home(tmp_path):
     import shlex
     import shutil
     import subprocess
-    conf = ISO / "airootfs/usr/lib/sysusers.d/bombadil-connect.conf"
+    conf = PAYLOAD / "usr/lib/sysusers.d/bombadil-connect.conf"
     lines = conf.read_text().splitlines()
     assert lines[0].startswith("#"), "a comment says what the account is for"
     entries = [shlex.split(line) for line in lines if line.strip() and not line.startswith("#")]
@@ -543,16 +580,16 @@ def test_the_connection_service_user_is_a_system_account_that_cannot_log_in_and_
 
 def test_the_browser_service_is_a_user_unit_that_starts_at_login_after_the_session_and_is_never_given_up_on():
     unit = _unit_keys(USER_UNITS / "bombadil-browserd.service")
-    assert unit["Service"]["ExecStart"] == ["/usr/local/bin/bombadil-browserd"]
+    assert unit["Service"]["ExecStart"] == ["/usr/bin/bombadil-browserd"]
     assert unit["Service"]["Restart"] == ["on-failure"]
     assert unit["Unit"]["After"] == ["graphical-session.target"] and unit["Unit"]["StartLimitIntervalSec"] == ["0"]
     assert unit["Install"]["WantedBy"] == ["default.target"]
-    assert _enabled_by(USER_UNITS / "default.target.wants/bombadil-browserd.service", "bombadil-browserd.service")
+    assert "bombadil-browserd.service" in _enabled_units("user")
     # The browser it starts for a page is the person's, so it outlives a restart of the service.
     assert unit["Service"]["KillMode"] == ["process"]
     # It starts before there is a screen, but opening a page needs one (Chromium's display, the panel's compositor):
     # the session hands it both and starts it again, as it does for mail.
-    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     start = lua[lua.index('hl.on("hyprland.start"'):]
     start = start[:start.index("\nend)")]
     line = next(part for part in start.split("hl.exec_cmd(") if "bombadil-browserd" in part)
@@ -560,13 +597,11 @@ def test_the_browser_service_is_a_user_unit_that_starts_at_login_after_the_sessi
     assert line.index("import-environment") < line.index("restart bombadil-browserd.service")
 
 
-def test_the_build_links_the_connection_services_commands_into_usr_local_bin():
-    build = (ROOT / "scripts/build-iso.sh").read_text()
-    names = re.search(r"^for b in ([^;]+); do$", build, re.MULTILINE).group(1).split()
-    assert {"bombadil-connect", "bombadil-browserd"} <= set(names)
-    # What each unit starts is the link the build makes, to a command the tree ships and can run.
+def test_the_package_links_the_connection_services_commands_into_usr_bin():
+    _assert_the_package_links_in_usr_bin("bombadil-connect", "bombadil-browserd")
+    # What each unit starts is the link the package makes, to a command the tree ships and can run.
     for unit in (SYSTEM_UNITS / "bombadil-connect.service", USER_UNITS / "bombadil-browserd.service"):
-        assert _unit_keys(unit)["Service"]["ExecStart"] == [f"/usr/local/bin/{unit.stem}"], unit
+        assert _unit_keys(unit)["Service"]["ExecStart"] == [f"/usr/bin/{unit.stem}"], unit
         assert os.access(ROOT / "bin" / unit.stem, os.X_OK), unit.stem
 
 
@@ -590,7 +625,7 @@ def test_the_connect_skill_reaches_both_clis_and_names_the_tools_the_contract_gi
     # The words that start a setup are the contract's, no more and no fewer.
     words = set(re.findall(r"`connect (\w+)`", contract[contract.index("**Launcher words**"):]))
     assert words == set(re.findall(r"`connect (\w+)`", skill)) and len(words) == 6
-    skel = ISO / "airootfs/etc/skel"
+    skel = PAYLOAD / "etc/skel"
     for where in (".claude/skills", ".agents/skills"):
         link = skel / where / "bombadil-connect"
         assert link.is_symlink() and os.readlink(link) == "/usr/share/bombadil/share/skills/bombadil-connect"
@@ -614,13 +649,13 @@ def test_the_connect_skill_never_tells_the_agent_to_send_or_to_hold_a_key():
 
 
 def test_the_connect_skill_is_in_the_users_home_on_the_built_image():
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     assert ("check connect-skill-installed as_user test -f /home/user/.claude/skills/bombadil-connect/SKILL.md "
             "-a -f /home/user/.agents/skills/bombadil-connect/SKILL.md") in smoke
 
 
 def test_the_smoke_test_covers_connections_and_notifications():
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     for name in ("connect-tools-installed", "connect-python-installed", "mako-is-not-installed",
                  "connect-skill-installed", "connect-user-exists", "connect-unit-enabled", "connect-unit-active",
                  "connect-unit-hardened", "connect-unit-answers", "connect-state-is-closed", "browserd-unit-enabled",
@@ -677,7 +712,7 @@ def _run_picture(tmp_path, answers, kind="network", target=""):
     """The smoke's own picture() function, in bash, with os-mcp stood in for by `answers` (one per try,
     the last one repeated). Returns (exit code, the scales each try asked for, what wait_for was given)."""
     import subprocess
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     start = smoke.index("picture() {")
     body = smoke[start:smoke.index("\n}\n", start) + 3]
     (tmp_path / "answers").write_text("\n".join(answers) + "\n")
@@ -734,7 +769,7 @@ def test_a_picture_in_the_wrong_shape_fails_at_once_and_is_not_asked_again(tmp_p
 
 
 def test_the_smoke_waits_for_a_calm_guest_before_its_pictures_and_defines_calm_once():
-    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    smoke = (PAYLOAD / "usr/bin/bombadil-smoke").read_text()
     assert smoke.count("calm() {") == 1
     waited = smoke.index('wait_for 240 calm || say "NOTE the machine was still busy when the pictures were taken"')
     assert smoke.index("calm() {") < waited < smoke.index("for kind in network boot disks sound screens")

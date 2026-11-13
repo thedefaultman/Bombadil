@@ -11,12 +11,13 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+from payload import HYPR_LUA, PAYLOAD
 from qml_theme import THEME
 
 ROOT = Path(__file__).resolve().parents[1]
 ISO = ROOT / "iso"
 ENTRIES = ISO / "efiboot" / "loader" / "entries"
-GRUB_DROPINS = ISO / "airootfs" / "etc" / "default" / "grub.d"
+GRUB_DROPINS = PAYLOAD / "etc" / "default" / "grub.d"
 DROPIN = GRUB_DROPINS / "zz-bombadil-console.cfg"
 
 
@@ -100,14 +101,14 @@ def test_the_grub_drop_in_adds_to_the_line_and_sorts_after_every_other_drop_in()
 def test_the_installer_copies_the_live_etc_so_the_drop_in_arrives_with_it():
     # bombadil-install copies the image (or, with none mounted, the running system), /etc/default/grub.d
     # included, and removes only the files it names.
-    script = (ISO / "airootfs" / "usr" / "local" / "bin" / "bombadil-install").read_text()
+    script = (PAYLOAD / "usr" / "bin" / "bombadil-install").read_text()
     copy = script.split("copy_system() {")[1].split("\n}\n")[0]
     after_copy = copy.split('cp -a "$image/." "$target/"')[1]
     assert 'cp -a "$image/." "$target/"' in copy and "cp -ax /. " in copy and "grub.d" not in after_copy
 
 
 def test_greetd_keeps_hyprlands_start_up_text_off_the_console():
-    cfg = tomllib.loads((ISO / "airootfs" / "etc" / "greetd" / "config.toml").read_text())
+    cfg = tomllib.loads((PAYLOAD / "usr" / "share" / "bombadil" / "greetd" / "config.toml").read_text())
     assert cfg["terminal"]["vt"] == 1
     for session in ("default_session", "initial_session"):
         command = cfg[session]["command"]
@@ -117,7 +118,7 @@ def test_greetd_keeps_hyprlands_start_up_text_off_the_console():
 
 def test_hyprlands_own_background_is_the_opaque_ground():
     # 0xAARRGGBB: 0x101214 has alpha 00, which Hyprland draws as black (the desk was black on every boot).
-    lua = (ISO / "airootfs" / "etc" / "skel" / ".config" / "hypr" / "hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     m = re.search(r"^\s*background_color\s*=\s*0x([0-9a-fA-F]{8})\b", lua, re.MULTILINE)
     assert m, "background_color must be a 0xAARRGGBB number"
     assert m.group(1).lower() == "ff" + THEME["bg"][1:]

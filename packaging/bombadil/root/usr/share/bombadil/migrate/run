@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Runs the numbered steps that change files other packages own, in order. Each step checks the file, not a
+# version, so running them again changes nothing. A step that fails is logged and the rest still run: this
+# always exits 0, because a failed step must never fail the pacman transaction that triggered it.
+#
+# BOMBADIL_ROOT is the root to work on (default /); tests give it a fake one.
+#
+# Each step prints "changed" or "already" and exits 0, or says why it could not and exits 1.
+# No -e: a failing step is read, not obeyed.
+set -uo pipefail
+
+export BOMBADIL_ROOT="${BOMBADIL_ROOT:-/}"
+dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+log="${BOMBADIL_ROOT%/}/var/log/bombadil-migrate.log"
+mkdir -p "$(dirname "$log")" 2>/dev/null || true
+
+for step in "$dir"/[0-9][0-9][0-9]-*.sh; do
+  [[ -f "$step" ]] || continue
+  name="$(basename "$step" .sh)"
+  out="$(bash "$step" 2>&1)"
+  rc=$?
+  out="${out//$'\n'/ }"
+  if (( rc == 0 )); then
+    # A step that had nothing to do is not logged: the hook runs on every upgrade of the packages it watches.
+    [[ "$out" == already* ]] && continue
+    line="$name ${out:-done}"
+  else
+    line="$name FAILED rc=$rc $out"
+    echo "bombadil: migrate step $name failed (see $log)" >&2
+  fi
+  printf '%s %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$line" >> "$log" 2>/dev/null || true
+done
+exit 0

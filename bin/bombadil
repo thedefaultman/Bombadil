@@ -5,6 +5,7 @@
                                        or paused) it says so and exits 75 instead of waiting for the reset
                                        (the ask stays queued and runs then)
   bombadil status                      is the agent busy, which provider
+  bombadil version [--json]            which Bombadil this is and when it was installed (needs no agentd)
   bombadil stop                        end the running turn and everything it started
   bombadil pill                        give the pill the keyboard (a Super tap does it inside the bar; this is
                                        for scripts, and for a session without Hyprland)
@@ -421,6 +422,11 @@ def main() -> int:
         return talk({"type": "prompt", "text": " ".join(args)})
     elif cmd == "status":
         return talk({"type": "status"}, until="status")
+    elif cmd == "version":
+        # From two files, so it answers with agentd down or the desktop not started.
+        from bombadil import version
+        print(json.dumps(version.facts(), indent=2) if "--json" in args else version.version_line())
+        return 0
     elif cmd == "stop":
         return send({"type": "stop"})
     elif cmd == "pill":

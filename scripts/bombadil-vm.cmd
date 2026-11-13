@@ -3,7 +3,8 @@ rem Bombadil in a VM window on Windows: QEMU with KVM inside a WSL distro named 
 rem through WSLg. Double-click it, or run it with the same arguments as scripts/wsl-vm.sh:
 rem   bombadil-vm            boot the installed VM (the first run builds the ISO and installs it)
 rem   bombadil-vm live       boot the live ISO
-rem   bombadil-vm refresh    keep the VM's disk (login, apps, files): restore point first, then move it to this checkout
+rem   bombadil-vm update     build the package from this checkout and serve it to the VM: Bombadil updates through pacman, nothing on the disk changes
+rem   bombadil-vm refresh    keep the VM's disk (login, apps, files): restore point first, then replace the system with this checkout's
 rem   bombadil-vm stop       shut the VM down cleanly
 rem   bombadil-vm reinstall  rebuild if this checkout moved on, wipe the VM's disk (asks first), install again
 rem   bombadil-vm build      only build the ISO

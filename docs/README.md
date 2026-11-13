@@ -34,7 +34,7 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 | Mail in its own window, with Thunderbird as the unseen engine | Partly shipped | [mail](architecture/mail.md), contract [MAIL.md](MAIL.md) |
 | Slack and the work tools (Notion, Linear, Jira, Todoist, ClickUp) as one line and one card, a reply or a ticket that leaves only on the person's press, and a service of its own that keeps the keys | Shipped | [connect](architecture/connect.md), contract [CONNECT.md](CONNECT.md) |
 | When the AI's plan runs out | Partly shipped | [poor man switch](architecture/poor-man-switch.md) |
-| Bombadil installed on a disk, encrypted or plain: the guided, planned and whole-disk install, the refresh that keeps the home folder, the GRUB screen and remote control; the install card, packages and updates are designed | Partly shipped | [installed OS](architecture/installed-os.md) |
+| Bombadil installed on a disk, encrypted or plain: the guided, planned and whole-disk install, the refresh that keeps the home folder, the GRUB screen and remote control, and Bombadil as a pacman package that an installed machine updates with `pacman -Syu` (what it owns, the migrate and homefix steps, the config split, versions); the install card and updates as a turn are designed | Partly shipped | [installed OS](architecture/installed-os.md) |
 | What the desktop costs when nothing is happening, and the watch that keeps it low | Shipped | [idle cost](architecture/idle-cost.md), contract [IDLE-COST.md](IDLE-COST.md) |
 
 A row that names a contract has a flat page in `docs/` that holds the exact wire formats, states and rules, because comments in the code point to it; the architecture page of the piece says how it works.
@@ -62,6 +62,6 @@ A row that names a contract has a flat page in `docs/` that holds the exact wire
 - [The security model](security-model.md): what the agent can do, who can reach what, and what undo covers and does not.
 - [Documenting your piece](contributing/documenting.md): where things go, the shape of a page, diagrams, what must never be committed, and the checker.
 - [Writing a design brief](contributing/design-briefs.md).
-- [Testing the whole system in a VM](contributing/vm-testing.md): the smoke test that boots the real image, what it covers and its traps.
+- [Testing the whole system in a VM](contributing/vm-testing.md): the smoke test that boots the real image, its modes (live, install, refresh, update), what it covers and its traps.
 - [The Mail contract](MAIL.md), [the brain contract](BRAIN.md), [the Tips contract](TIPS.md), [the tip scenes contract](TIP-SCENES.md), [the messages and connections contract](CONNECT.md), [Motion, and reduced motion](MOTION.md) and [what the desktop costs when nothing is happening](IDLE-COST.md): the exact wire formats, states and rules that comments in the code point to. The pages for [Mail](architecture/mail.md), [the brain](architecture/brain.md), [Tips](architecture/tips.md), [messages and connections](architecture/connect.md) and [idle cost](architecture/idle-cost.md) say how each piece works; these say what it promises.
 - `docs/screens/` and `docs/mail/screens/`: the screenshots the pages show. `docs/tools/check_docs.py`: the docs checker (`python3 docs/tools/check_docs.py --mermaid`).

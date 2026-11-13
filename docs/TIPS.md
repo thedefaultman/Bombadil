@@ -34,7 +34,7 @@ scene is not true are in [`TIP-SCENES.md`](TIP-SCENES.md).
 | `src/bombadil/tips.py` | Loads and checks the table, decides which tips this machine can back (`Facts`, `backed`), fills the placeholders, keeps `tips.json`, picks the card, counts tips as tried. Standard library only; every file it reads and the clock are parameters, so the tests hand it text and a date. |
 | `src/bombadil/agentd.py` | Owns one `Tips`. Tells every client the `tips` message when it changed, answers the shell's `tips` ops, remembers a button's words, and feeds `Tips` the evidence it sees (the words typed, a launcher action, a tool, a job, a `!` command, a stop). |
 | `src/bombadil/paths.py` | `tips_file()` (`~/.local/state/bombadil/tips.json`) and `tips_table()` (`share/tips/tips.toml` beside the package). |
-| `iso/airootfs/usr/local/bin/bombadil-install` | Copies `tips.json` and `desk.toml` to the installed disk with the sign-in, so the first week does not begin again after an install. |
+| `packaging/bombadil/root/usr/bin/bombadil-install` | Copies `tips.json` and `desk.toml` to the installed disk with the sign-in, so the first week does not begin again after an install. |
 | `share/apps/tips/` | The Tips app: a built-in kit app, the window where each tip plays. Its own section is below. |
 | `src/bombadil/launcher.py` | `TIPS_COMMANDS`: the words that open the app, and `APP_WIDGETS`, made from it: the desk widgets whose open words are the app's ([one word, two owners](#a-kept-tips-card)). |
 | `src/bombadil/appkit/native/agent.py` | `Agent.draft(text)`: the app's button. |

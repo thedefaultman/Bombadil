@@ -28,8 +28,8 @@ honoured it.
 
 ## Turning it on
 
-Set `BOMBADIL_REDUCE_MOTION=1` in the environment the session starts with. `hyprland.lua` imports that
-environment into the user manager before it restarts agentd and the shell, and agentd starts apps with its own
+Set `BOMBADIL_REDUCE_MOTION=1` in the environment the session starts with. Bombadil's part of the Hyprland
+config (`share/hypr/bombadil.lua`) imports that environment into the user manager before it restarts agentd and the shell, and agentd starts apps with its own
 environment, so the bar, the desk and every app see it. Anything other than `1` is off. From a checkout:
 `BOMBADIL_REDUCE_MOTION=1 bin/bombadil-shell`, and the same in front of `bombadil-app run <name>` or
 `bombadil-app check <name>`.
@@ -104,7 +104,7 @@ steps a picture is an animation and takes the rule (below).
 What the switch does not reach:
 
 - **The compositor's own slides.** Windows, panels and their fades are Hyprland's animations, set in
-  `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` (`animations`, the `windows`, `specialWorkspace` and `fade`
+  `share/hypr/bombadil.lua` (`animations`, the `windows`, `specialWorkspace` and `fade`
   leaves). Nothing there reads the variable yet. This is the biggest remaining movement: an app sliding in from
   its drawer. It needs a real compositor to try, so it is listed as open rather than guessed.
 - **The toolkit's own feel**: touch and wheel scrolling inertia, and the text cursor's blink, are Qt's.

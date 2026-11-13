@@ -1,3 +1,5 @@
+# Bombadil itself: its units, commands, desktop config and the tree under /usr/share/bombadil
+bombadil
 # base system
 base
 linux
@@ -49,6 +51,9 @@ sof-firmware
 inter-font
 noto-fonts
 noto-fonts-emoji
+# named because the bombadil package depends on them (base brings them too)
+pacman
+systemd
 # agents
 nodejs
 npm

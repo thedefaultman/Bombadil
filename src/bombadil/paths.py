@@ -71,6 +71,16 @@ def share_dir() -> Path:
     return _env_path("BOMBADIL_SHARE", Path("/usr/share/bombadil"))
 
 
+def version_file() -> Path:
+    """The line `YYYY.MM.DD (commit)` that the package build writes beside the tree (version.py)."""
+    return share_dir() / "VERSION"
+
+
+def install_record() -> Path:
+    """What the installer wrote about this system: when it was installed or refreshed (version.py)."""
+    return _env_path("BOMBADIL_INSTALL_RECORD", Path("/var/lib/bombadil/install.json"))
+
+
 def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
 
@@ -105,6 +115,11 @@ def desk_file() -> Path:
 
 def jobs_dir() -> Path:
     return state_dir() / "jobs"
+
+
+def home_file() -> Path:
+    """What homefix has done in this home, step by step (homefix.py)."""
+    return state_dir() / "home.json"
 
 
 def tips_file() -> Path:

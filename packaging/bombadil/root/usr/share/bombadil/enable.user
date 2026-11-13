@@ -1,0 +1,5 @@
+# User units the package turns on once (bombadil.install), for every user. One name per line.
+# Not listed: bombadil-agentd and bombadil-shell have no [Install] section; Hyprland starts them.
+bombadil-brain.service
+bombadil-browserd.service
+bombadil-mail.service

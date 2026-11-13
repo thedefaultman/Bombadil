@@ -654,7 +654,7 @@ def test_upsert_key_sets_a_title_only_when_it_changed_and_search_follows():
 # -- a shell turn's writer can be gone before the watcher reads it --
 
 UNIT = "bombadil-turn-99-9-1727429990"
-AGENTD = [[3, "python3", "/usr/bin/python3 /usr/local/bin/agentd"], [2, "systemd", "systemd --user"]]
+AGENTD = [[3, "python3", "/usr/bin/python3 /usr/bin/agentd"], [2, "systemd", "systemd --user"]]
 
 
 def gone(op, path, t, chain=AGENTD, **extra):

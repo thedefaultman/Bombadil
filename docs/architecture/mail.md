@@ -1,7 +1,7 @@
 # Mail
 
 > **Status:** Partly shipped  
-> **Code:** `src/bombadil/mail/`, `bin/bombadil-mail`, `bin/bombadil-mail-host`, `bin/bombadil`, `share/apps/mail/`, `share/mail/extension/`, `share/skills/bombadil-mail/SKILL.md`, `src/bombadil/outbox.py`, `src/bombadil/notices.py`, `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/apps.py`, `src/bombadil/paths.py`, `src/bombadil/procs.py`, `src/bombadil/mcp_server.py`, `src/bombadil/narrate.py`, `src/bombadil/providers.py`, `shell/PillState.qml`, `shell/StatusLine.qml`, `shell/NoticeChips.qml`, `iso/packages.x86_64`, `iso/airootfs/etc/systemd/user/bombadil-mail.service`, `iso/airootfs/etc/thunderbird/policies/policies.json`, `iso/airootfs/etc/xdg/mimeapps.list`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `scripts/dev-session.sh`, `tests/mail/lab/`  
+> **Code:** `src/bombadil/mail/`, `bin/bombadil-mail`, `bin/bombadil-mail-host`, `bin/bombadil`, `share/apps/mail/`, `share/mail/extension/`, `share/skills/bombadil-mail/SKILL.md`, `src/bombadil/outbox.py`, `src/bombadil/notices.py`, `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/apps.py`, `src/bombadil/paths.py`, `src/bombadil/procs.py`, `src/bombadil/mcp_server.py`, `src/bombadil/narrate.py`, `src/bombadil/providers.py`, `shell/PillState.qml`, `shell/StatusLine.qml`, `shell/NoticeChips.qml`, `iso/packages.x86_64`, `packaging/bombadil/root/usr/lib/systemd/user/bombadil-mail.service`, `packaging/bombadil/root/etc/thunderbird/policies/policies.json`, `packaging/bombadil/root/etc/xdg/mimeapps.list`, `share/hypr/bombadil.lua`, `packaging/bombadil/root/usr/bin/bombadil-smoke`, `scripts/dev-session.sh`, `tests/mail/lab/`  
 > **Design:** [Bombadil at work, piece 1](../design/everyday-work-brief.md#1-mail-in-bombadils-own-view), [the page](../design/pages/bombadil-at-work.html), [Mail view](../design/mail-view.md)  
 > **Verified:** 2026-11-08 against `main` at `7176e55`: the code behind each claim below was read at that commit (the known gap on encryption at rest was read again on 2026-11-12 against `main` at `7d37bc5`). In this check the add-on's Node tests (`tests/test_mail_addon.py`), `tests/test_iso_profile.py` and `tests/test_mail_store.py` were run and passed; the other Python tests were last run on the fake engine on 2026-10-01 at `969b80b`, and the QML tests, the real-Thunderbird tests and the lab were not run (see [Tests](#tests)), so what a real Thunderbird does is the lab's finding, not a result of this check.
 
@@ -65,7 +65,7 @@ The pictures show the window on the fake engine, so every person and address in 
 
 1. The window's address card, or `bombadil mail add EMAIL`, sends `add_account`. `accounts.detect` finds the provider from a known domain, else the domain's MX record (a small standard-library DNS client), else a guess at `imap.<domain>`. Google and Microsoft are IMAP and SMTP with OAuth, iCloud is IMAP with an app-specific password, anything else is IMAP with a password.
 2. The service stores the account in state `signin` (OAuth) or `syncing`, has `ThunderbirdProcess.seed_account` write it into the profile as Thunderbird's own setup would, and starts or restarts Thunderbird.
-3. The person finishes in Thunderbird's own window, which "Show Thunderbird's window" brings up (`engine_window` with `action: "stage"`) and "Done" puts away. An OAuth consent page opens in the system browser, which on the ISO is the browser panel (`iso/airootfs/etc/xdg/mimeapps.list`); a password account gets Thunderbird's password prompt. Bombadil never sees the password or the token.
+3. The person finishes in Thunderbird's own window, which "Show Thunderbird's window" brings up (`engine_window` with `action: "stage"`) and "Done" puts away. An OAuth consent page opens in the system browser, which on the ISO is the browser panel (`packaging/bombadil/root/etc/xdg/mimeapps.list`); a password account gets Thunderbird's password prompt. Bombadil never sees the password or the token.
 4. After that the state is the add-on's reading of Thunderbird (`sync` events). `remove_account` deletes the account's marks, drafts and attachment copies and makes Thunderbird forget it: prefs, folder, caches and sign-in, unless another account uses the same sign-in.
 
 ### A send
@@ -194,8 +194,8 @@ Mail says four things above the pill. Mail from someone the person knows, as "Pr
 | `bombadil-app check mail`, `BOMBADIL_CHECK=1`, `BOMBADIL_MAIL_SAMPLE` | Loads the window offscreen on sample mail, with no socket. `BOMBADIL_MAIL_SAMPLE` picks the sample screen: `first-run`, `reply`, or the list when it is empty |
 | `BOMBADIL_MAIL_SOCKET`, `BOMBADIL_MAIL_DB`, `BOMBADIL_MAIL_FILES`, `BOMBADIL_MAIL_PROFILE`, `BOMBADIL_PRESS_LOG` | Where the state below lives |
 | `BOMBADIL_MAIL_ENGINE=fake`, `BOMBADIL_MAIL_FAKE_DRIP`, `BOMBADIL_MAIL_THUNDERBIRD` | The fake engine, the seconds between its sample mails, and a Thunderbird binary to run instead of the one on `PATH` |
-| `bombadil-mail.service` | The user unit in `iso/airootfs/etc/systemd/user/`, enabled for every login. `hyprland.lua` hands it the session's display and restarts it, because it starts before there is a screen |
-| `/etc/thunderbird/policies/policies.json` | `DisableAppUpdate`, `DisableTelemetry` and `DontCheckDefaultClient`, from `iso/airootfs/etc/thunderbird/policies/` |
+| `bombadil-mail.service` | The user unit in `packaging/bombadil/root/usr/lib/systemd/user/`, enabled for every login by the package (`enable.user`). `share/hypr/bombadil.lua` hands it the session's display and restarts it, because it starts before there is a screen |
+| `/etc/thunderbird/policies/policies.json` | `DisableAppUpdate`, `DisableTelemetry` and `DontCheckDefaultClient`, from `packaging/bombadil/root/etc/thunderbird/policies/` |
 
 ## Where state lives
 
@@ -241,7 +241,7 @@ Mail says four things above the pill. Mail from someone the person knows, as "Pr
 | The window | `tests/test_mail_app_backend.py`, `tests/test_mail_app_qml.py` (with `tests/mail_app_lab.py`), `tests/test_notice_qml.py` | Skipped without PySide6 |
 | A real Thunderbird | `tests/test_mail_addon_real.py`, `tests/test_mail_e2e_real.py`: a local Dovecot and SMTP sink on loopback, the shipped add-on, the real host | Skipped without an unpacked Thunderbird (`BOMBADIL_TEST_THUNDERBIRD`, else the lab's copy from `tests/mail/lab/fetch-thunderbird.sh`) and Dovecot |
 | The image | `tests/test_iso_profile.py` (unit, policy file, skill links), `tests/test_apps.py` (the reserved names, `mail` and `tips`) | Yes |
-| The desktop and the VM | The notice steps of `tests/desktop/driver.py` and the mail checks of `iso/airootfs/usr/local/bin/bombadil-smoke`, both on the fake engine | Need Docker or QEMU; see [development](../contributing/development.md) |
+| The desktop and the VM | The notice steps of `tests/desktop/driver.py` and the mail checks of `packaging/bombadil/root/usr/bin/bombadil-smoke`, both on the fake engine | Need Docker or QEMU; see [development](../contributing/development.md) |
 | The lab | `tests/mail/lab/`: scripts `q1` to `q5`, and `FINDINGS.md` with what Thunderbird 157 did | Needs a download and Dovecot |
 
 Run one file at a time on a busy machine, for example `pytest tests/test_mail_service.py`, and `BOMBADIL_TEST_THUNDERBIRD=/path/to/thunderbird pytest tests/test_mail_e2e_real.py` for the real chain. On 2026-10-01 the Python and Node tests above passed on the fake engine, and the QML, real-Thunderbird, Xvfb and Dovecot tests skipped for the reasons in the table.

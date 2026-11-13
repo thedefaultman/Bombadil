@@ -13,9 +13,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from payload import PAYLOAD
 
 ROOT = Path(__file__).resolve().parent.parent
-BIN = ROOT / "iso/airootfs/usr/local/bin"
+BIN = PAYLOAD / "usr/bin"
 INSTALL = BIN / "bombadil-install"
 ROLLBACK = BIN / "bombadil-rollback"
 GRUB_CONFIG = BIN / "bombadil-grub-config"
@@ -273,7 +274,7 @@ def test_grub_gets_the_mark_and_a_font_for_its_password_screen(tmp_path):
 
 
 def test_the_password_screen_is_set_before_the_header_asks_for_the_password():
-    script = ROOT / "iso/airootfs/etc/grub.d/000_bombadil_screen"
+    script = PAYLOAD / "etc/grub.d/000_bombadil_screen"
     assert sorted(["00_header", script.name])[0] == script.name   # grub-mkconfig runs them in name order
 
     def block(terminal: str | None) -> str:
@@ -293,7 +294,7 @@ def test_the_password_screen_is_set_before_the_header_asks_for_the_password():
 
 def test_the_font_the_installer_makes_is_the_one_the_screen_loads():
     install = INSTALL.read_text()
-    screen = (ROOT / "iso/airootfs/etc/grub.d/000_bombadil_screen").read_text()
+    screen = (PAYLOAD / "etc/grub.d/000_bombadil_screen").read_text()
     assert "grub-mkfont -s 16" in install and "/efi/grub/themes/bombadil/inter-16.pf2" in install
     assert "grub/themes/bombadil/inter-16.pf2" in screen
     assert (ROOT / "share/grub/bombadil/background.png").is_file()
@@ -526,13 +527,14 @@ def test_the_refresh_note_names_the_programs_the_old_system_had_that_the_new_one
 
 # -- the record -----------------------------------------------------------------------------------------------
 
-def record(tmp_path, *, mode="fresh", zone="Europe/Lisbon", source="detected", recovery="", old=""):
+def record(tmp_path, *, mode="fresh", zone="Europe/Lisbon", source="detected", recovery="", old="", work=None):
     target = tmp_path / "target"
     (target / "etc").mkdir(parents=True, exist_ok=True)
     link = target / "etc/localtime"
     link.unlink(missing_ok=True)
     link.symlink_to(f"/usr/share/zoneinfo/{zone}")
-    sh(f'target="{target}"; mode={mode}; version="Bombadil 0.1"; encrypt={"yes" if recovery else "no"}; '
+    where = f'work="{work}"; ' if work else ""
+    sh(f'{where}target="{target}"; mode={mode}; version="Bombadil 0.1"; encrypt={"yes" if recovery else "no"}; '
        f'kind=usb; recovery="{recovery}"; old="{old}"; stick_brought=(); P_TIMEZONE_SOURCE={source}; record')
     return json.loads((target / "var/lib/bombadil/install.json").read_text()), target
 
@@ -543,6 +545,45 @@ def test_the_record_says_what_was_installed_where_the_zone_came_from_and_what_is
     assert rec["timezone"] == "Europe/Lisbon" and rec["timezone_source"] == "detected"
     assert rec["target_kind"] == "usb" and rec["recovery_key_pending"] is False and rec["kept_aside"] == []
     assert not (target / "var/lib/bombadil/recovery-key").exists()
+
+
+OLD_ROOT = "@.before-refresh-20261001-120000"
+
+
+def old_record(tmp_path, content: str) -> Path:
+    """The record on the root a refresh put aside, where the installer finds it: $work/top/$old."""
+    f = tmp_path / "work/top" / OLD_ROOT / "var/lib/bombadil/install.json"
+    f.parent.mkdir(parents=True)
+    f.write_text(content)
+    return tmp_path / "work"
+
+
+def test_a_fresh_install_writes_the_same_moment_as_its_date_and_its_first_install(tmp_path):
+    rec, _ = record(tmp_path)
+    assert rec["first_installed"] == rec["date"]
+
+
+def test_a_refresh_keeps_the_first_install_of_the_home_and_dates_itself_anew(tmp_path):
+    work = old_record(tmp_path, json.dumps({"date": "2026-10-05T10:00:00+0000", "first_installed": "2026-09-30T08:00:00+0000"}))
+    rec, _ = record(tmp_path, mode="refresh", old=OLD_ROOT, work=work)
+    assert rec["first_installed"] == "2026-09-30T08:00:00+0000"
+    assert rec["date"] != rec["first_installed"] and rec["date"] > "2026-10-05"
+    # Written again later in the same refresh (after the programs from the stick): the first install is still the old one.
+    again, _ = record(tmp_path, mode="refresh", old=OLD_ROOT, work=work)
+    assert again["first_installed"] == "2026-09-30T08:00:00+0000"
+
+
+def test_a_refresh_from_a_record_made_before_first_installed_existed_takes_that_records_date(tmp_path):
+    work = old_record(tmp_path, json.dumps({"date": "2026-10-05T10:00:00+0000", "layout": 1}))
+    rec, _ = record(tmp_path, mode="refresh", old=OLD_ROOT, work=work)
+    assert rec["first_installed"] == "2026-10-05T10:00:00+0000"
+
+
+@pytest.mark.parametrize("content", [None, "not json", "[]", "{}"])
+def test_a_refresh_with_no_usable_old_record_starts_the_count_from_now(tmp_path, content):
+    work = old_record(tmp_path, content) if content is not None else tmp_path / "work"
+    rec, _ = record(tmp_path, mode="refresh", old=OLD_ROOT, work=work)
+    assert rec["first_installed"] == rec["date"]
 
 
 def test_a_recovery_key_waits_for_its_first_showing_and_only_the_owner_can_read_it(tmp_path):
@@ -953,11 +994,14 @@ def test_a_refresh_keeps_the_account_its_old_password_even_when_a_password_was_g
 
 
 @pytest.mark.parametrize("mode", ["fresh", "refresh"])
-def test_the_account_lingers_so_coding_sessions_outlive_the_session_that_started_them(tmp_path, mode):
-    # The stick turns this on from bombadil-live.service, which an install does not copy; a refresh of an older
-    # system has no linger file to keep either.
+def test_lingering_is_the_packages_tmpfiles_line_and_the_installer_does_not_touch_it(tmp_path, mode):
+    # Coding sessions outlive the session that started them because the user's systemd lingers. The bombadil
+    # package's tmpfiles.d line makes the file; a refresh also keeps the old system's.
     log = configure_run(tmp_path, mode=mode, password="x", old_hash="$6$salt$hash")
-    assert "touch /var/lib/systemd/linger/user" in log
+    assert "/var/lib/systemd/linger" not in log
+    tmpfiles = (PAYLOAD / "usr/lib/tmpfiles.d/bombadil.conf").read_text().splitlines()
+    assert "f /var/lib/systemd/linger/user - - - -" in tmpfiles
+    assert "var/lib/systemd/linger" in sh('printf "%s\\n" "${REFRESH_KEEP[@]}"').stdout.split()
 
 
 def test_no_password_leaves_the_account_without_one(tmp_path):
@@ -1090,6 +1134,47 @@ else printf 'base 1-1\\nvim 9-1\\nspotify 2-1\\nlibfoo 3-2\\nmissing 1-1\\n'; fi
     assert (target / "var/cache/pacman/pkg/spotify-2-1-x86_64.pkg.tar.zst.sig").exists()
 
 
+def replay_fixture(tmp_path, stick: str, image: str, cache_files):
+    target = tmp_path / "target"
+    (target / "var/cache/pacman/pkg").mkdir(parents=True)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    for f in cache_files:
+        (cache / f).write_text("pkg")
+    log = tmp_path / "log"
+    shims = tmp_path / "shims"
+    shim(shims, "pacman", f"""if [[ "$1" == --dbpath ]]; then printf '{image}'; else printf '{stick}'; fi""")
+    shim(shims, "arch-chroot", f'echo "CHROOT $*" >>"{log}"')
+    r = sh(f'target="{target}"; image=/run/img; record() {{ echo RECORD >>"{log}"; }}; snapshot() {{ echo "SNAP $1" >>"{log}"; }}; '
+           'replay_stick_packages; echo "brought=${stick_brought[*]:-}"',
+           env={"BOMBADIL_STICK_CACHE": str(cache)}, path_first=shims)
+    return r, (log.read_text() if log.exists() else "")
+
+
+def test_a_newer_bombadil_on_the_stick_is_not_brought_along_as_a_program_from_the_stick(tmp_path):
+    # The stick can take an update of the package (the laptop's update command serves one); the installed system starts
+    # with the image's own copy, and a package reinstalled from the stick's cache would put the two out of step.
+    r, log = replay_fixture(
+        tmp_path, stick="base 1-1\\nbombadil 2026.11.13-1\\nspotify 2-1\\n", image="base 1-1\\nbombadil 2026.11.12-1\\n",
+        cache_files=["bombadil-2026.11.13-1-any.pkg.tar.zst", "spotify-2-1-x86_64.pkg.tar.zst"])
+    assert "brought=spotify" in r.stdout and "bombadil-2026" not in r.stdout + r.stderr
+    assert "pacman -U --noconfirm --needed /var/cache/pacman/pkg/spotify-2-1-x86_64.pkg.tar.zst" in log
+    assert "bombadil-2026" not in log
+
+
+def test_when_only_bombadil_differs_nothing_is_replayed_and_pacman_is_not_run_in_the_new_system(tmp_path):
+    r, log = replay_fixture(
+        tmp_path, stick="base 1-1\\nbombadil 2026.11.13-1\\n", image="base 1-1\\nbombadil 2026.11.12-1\\n",
+        cache_files=["bombadil-2026.11.13-1-any.pkg.tar.zst"])
+    assert r.stdout.strip().endswith("brought=") and log == ""
+    assert "Bringing" not in r.stdout + r.stderr
+    # A package that only the stick has, named like it, is still a program from the stick.
+    r, log = replay_fixture(
+        tmp_path / "again", stick="base 1-1\\nbombadil-extras 1-1\\n", image="base 1-1\\n",
+        cache_files=["bombadil-extras-1-1-any.pkg.tar.zst"])
+    assert "brought=bombadil-extras" in r.stdout and "bombadil-extras-1-1-any.pkg.tar.zst" in log
+
+
 def test_nothing_is_brought_when_the_stick_has_what_the_image_has(tmp_path):
     shims = tmp_path / "shims"
     shim(shims, "pacman", "printf 'base 1-1\\n'")
@@ -1115,7 +1200,7 @@ def test_the_installed_systems_own_restart_is_answered_at_grub_every_time_it_ask
 
 
 def test_the_smoke_test_recognises_the_stick_refusal_by_its_own_words_not_by_a_phrase_other_messages_share():
-    text = (ROOT / "iso/airootfs/usr/local/bin/bombadil-smoke").read_text()
+    text = (BIN / "bombadil-smoke").read_text()
     assert "is the USB stick Bombadil started from" in text
     installer = INSTALL.read_text()
     assert "is the USB stick Bombadil started from" in installer

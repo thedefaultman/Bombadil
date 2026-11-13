@@ -22,7 +22,7 @@ and why. Every person, address, workspace and company used as an example in it i
 - **The tokens are not the agent's.** The agent runs as the person, with a shell. `bombadil-connect` runs as its
   own system user and keeps every token in a directory only that user can read. The agent is never handed a
   token, and no tool returns one. This keeps the tokens from every program of the person's except what can use
-  `sudo`: the image gives its user passwordless `sudo` (`iso/airootfs/etc/sudoers.d/bombadil`), so the agent's
+  `sudo`: the image gives its user passwordless `sudo` (`packaging/bombadil/root/etc/sudoers.d/bombadil`), so the agent's
   own shell could read the store. It is a rule with a check, and becomes a wall when the agent loses `sudo` (the
   hardening order in the design page).
 - **The press is the person's.** The agent has `propose`, which puts a draft on a card; it has no tool that
@@ -487,11 +487,11 @@ burst becomes "+N" on the last); no notice at all for a notification whose summa
 notification text is other people's words; text that is not a string counts as empty, and a notification with the
 same shell id as one still held updates that notice while it is up instead of making a new one. The bar holds at most 64 notifications (the oldest is dismissed when a
 65th arrives), cuts text at 2000 characters and actions at 8; one that arrives while agentd is away waits and is
-sent once. An invoke with no matching or default action dismisses it, so Open on a notification that has no `default` action puts it away. A notice that ends (its time ran out, or the person put it away) without a Reply closes its notification in the bar; one with its card open stays until the card is put away. agentd holds at most 64 itself and closes the oldest to make room. `mako` is not in `iso/packages.x86_64`, `hyprland.lua` does not start it, and the image carries no `mako.service.d/restart.conf` drop-in.
+sent once. An invoke with no matching or default action dismisses it, so Open on a notification that has no `default` action puts it away. A notice that ends (its time ran out, or the person put it away) without a Reply closes its notification in the bar; one with its card open stays until the card is put away. agentd holds at most 64 itself and closes the oldest to make room. `mako` is not in `iso/packages.x86_64`, Bombadil's Hyprland config (`share/hypr/bombadil.lua`) does not start it, and the image carries no `mako.service.d/restart.conf` drop-in.
 
 ## The image
 
-`python-mcp` (2.3.0 in Arch's `extra` on 2026-11-09) and `python-httpx` are in `iso/packages.x86_64`. `python-mcp` pulls
+`python-mcp` (2.3.0 in Arch's `extra` on 2026-11-09) and `python-httpx` are in `iso/packages.x86_64` (and in the `depends` of the `bombadil` package, which a test holds to that list). `python-mcp` pulls
 `python-mcp-types` and `python-httpx2` as well as the SDK's other dependencies, from `extra` too;
 `python-httpx` is listed because `slack.py` imports it. `wl-clipboard` (for `wl-copy`) and `libnotify` (for
 `notify-send`) are in the list too, and `mako` is not. The VM smoke imports `httpx`, `httpx2` and `MCPError` (which
@@ -506,11 +506,11 @@ is a system unit (`User=bombadil-connect`, `StateDirectory=bombadil-connect` mod
 `MemoryMax=300M`, `Restart=on-failure`, and the kernel-facing keys systemd offers that the service does not need:
 `PrivateDevices`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectControlGroups`, an empty
 `CapabilityBoundingSet`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`; not
-`ProtectProc` or `PrivateUsers`, because the press check reads `/proc/<pid>` of the caller), enabled by a symlink in `multi-user.target.wants`; the user comes from
-`/usr/lib/sysusers.d/bombadil-connect.conf`. `scripts/build-iso.sh` links `bombadil-connect` and `bombadil-browserd` into `/usr/local/bin`, where both units start them. `bombadil-browserd.service` is a user unit like mail's: it starts at login, before the session has a screen, so the session's `hyprland.start` hook hands it the display and the compositor's instance and starts it again, as it does for mail (opening a page starts Chromium on that display and slides the panel in), and `KillMode=process` lets a browser it started outlive a restart of the service. `share/skills/bombadil-connect/SKILL.md`
-tells the agent what it may and may not do, and is linked into `/etc/skel/.claude/skills` and `.agents/skills`.
+`ProtectProc` or `PrivateUsers`, because the press check reads `/proc/<pid>` of the caller), turned on once by the `bombadil` package's scriptlet (its name is in `usr/share/bombadil/enable.system`, so a person who turns it off keeps it off through updates); the unit file is `packaging/bombadil/root/usr/lib/systemd/system/bombadil-connect.service` and the user comes from
+`/usr/lib/sysusers.d/bombadil-connect.conf` (`packaging/bombadil/root/usr/lib/sysusers.d`). The package links `bombadil-connect` and `bombadil-browserd` into `/usr/bin`, where both units start them. `bombadil-browserd.service` is a user unit like mail's: it starts at login, before the session has a screen, so the session's `hyprland.start` hook hands it the display and the compositor's instance and starts it again, as it does for mail (opening a page starts Chromium on that display and slides the panel in), and `KillMode=process` lets a browser it started outlive a restart of the service. `share/skills/bombadil-connect/SKILL.md`
+tells the agent what it may and may not do, and is linked into `/etc/skel/.claude/skills` and `.agents/skills` (`packaging/bombadil/root/etc/skel`; a home that lacks the link gets it from homefix at the next agentd start).
 
-`bombadil-smoke` (`iso/airootfs/usr/local/bin/bombadil-smoke`) checks the image for all of this: the commands and the
+`bombadil-smoke` (`packaging/bombadil/root/usr/bin/bombadil-smoke`) checks the image for all of this: the commands and the
 skill are installed, `mako` is neither installed nor running, `bombadil-connect` exists as a user with the shell
 `nologin`, the unit is enabled, active and hardened as systemd loaded it (`User`, `NoNewPrivileges`, `ProtectSystem`,
 `ProtectHome`, `PrivateTmp`, `RuntimeDirectoryMode`, `MemoryMax`), `/var/lib/bombadil-connect` is 0700, owned by it and cannot be

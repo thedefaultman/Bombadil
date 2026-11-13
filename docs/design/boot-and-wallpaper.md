@@ -1,9 +1,10 @@
 # Boot and the wallpaper
 
-> **Status:** Partly shipped. Shipped, on `main`: the quiet console (the live entry and the installed system's GRUB drop-in), the greetd line that keeps Hyprland's start-up text off the console, Hyprland's opaque ground colour, the wallpaper and the user's own picture. With reduced motion on (`Theme.reducedMotion`, [Motion](../MOTION.md)) the picture appears at once and does not fade in as "How the bar shows it" says. The stone in the wallpaper is an open taste choice (see the end of the page). Shipped, on `main`, with the installed OS and not by the change this page records: the GRUB password screen on the mark and in Inter, and the removal of GRUB's two `Loading` lines, both listed under "Not here". `bombadil-install` puts the picture and a font made from the system's Inter on the EFI partition, `iso/airootfs/etc/grub.d/000_bombadil_screen` shows them before GRUB asks for the password, and `bombadil-grub-config` writes `grub.cfg` without the `Loading` lines. `theme.txt` is not wired, and the disk asks for a password only when the person gave one. Designed: lock and login screens as the pill, which nothing on `main` draws.
-> **Code:** `shell/Wallpaper.qml`, `share/wallpaper/bombadil.png`, `scripts/make-wallpaper.py`, `scripts/console-palette.py`, `iso/efiboot/loader/entries/01-bombadil.conf`, `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg`, `iso/airootfs/etc/grub.d/000_bombadil_screen`, `iso/airootfs/usr/local/bin/bombadil-grub-config`, `iso/airootfs/usr/local/bin/bombadil-install`, `share/grub/bombadil/`, `iso/airootfs/etc/greetd/config.toml`, `tests/test_wallpaper.py`, `tests/test_boot_console.py`
+> **Status:** Partly shipped. Shipped, on `main`: the quiet console (the live entry and the installed system's GRUB drop-in), the greetd line that keeps Hyprland's start-up text off the console, Hyprland's opaque ground colour, the wallpaper and the user's own picture. With reduced motion on (`Theme.reducedMotion`, [Motion](../MOTION.md)) the picture appears at once and does not fade in as "How the bar shows it" says. The stone in the wallpaper is an open taste choice (see the end of the page). Shipped, on `main`, with the installed OS and not by the change this page records: the GRUB password screen on the mark and in Inter, and the removal of GRUB's two `Loading` lines, both listed under "Not here". `bombadil-install` puts the picture and a font made from the system's Inter on the EFI partition, `packaging/bombadil/root/etc/grub.d/000_bombadil_screen` shows them before GRUB asks for the password, and `bombadil-grub-config` writes `grub.cfg` without the `Loading` lines. `theme.txt` is not wired, and the disk asks for a password only when the person gave one. Designed: lock and login screens as the pill, which nothing on `main` draws.
+> **Code:** `shell/Wallpaper.qml`, `share/wallpaper/bombadil.png`, `scripts/make-wallpaper.py`, `scripts/console-palette.py`, `iso/efiboot/loader/entries/01-bombadil.conf`, `packaging/bombadil/root/etc/default/grub.d/zz-bombadil-console.cfg`, `packaging/bombadil/root/etc/grub.d/000_bombadil_screen`, `packaging/bombadil/root/usr/bin/bombadil-grub-config`, `packaging/bombadil/root/usr/bin/bombadil-install`, `share/grub/bombadil/`, `packaging/bombadil/root/usr/share/bombadil/greetd/config.toml`, `tests/test_wallpaper.py`, `tests/test_boot_console.py`
 > **Design:** [The Bombadil mark](identity-brief.md) and the [design system](../design-system/README.md) set the colours; [Shell](../architecture/shell.md) and [ISO and install](../architecture/iso-and-install.md) describe the parts this page touches
 > **Verified:** 2026-11-12 against `main` at `7d37bc5`: the status above, the paths above, and the statements about GRUB in the stages table, under "The quiet console" and under "Not here", read in `iso/airootfs/usr/local/bin/bombadil-install` (`grub_theme`, `grub_defaults`, `boot` and `copy_system`), `iso/airootfs/usr/local/bin/bombadil-grub-config`, `iso/airootfs/etc/grub.d/000_bombadil_screen`, `share/grub/bombadil/README.md` and `iso/efiboot/loader/entries/`. The tests were read, not run, and no screen was looked at. The rest of the page is the note that shipped with the change and was not re-checked on this date; the status statements on the wallpaper, the lock and login screens and the stone were last checked on 2026-11-11 against `main` at `7d17600`.
+> **Note, 2026-11-13:** Bombadil is the pacman package `bombadil` (`packaging/bombadil/`), so the files that the "Verified" line above names under `iso/airootfs/` are in `packaging/bombadil/root/` at the path they have on the machine: the installer and `bombadil-grub-config` in `usr/bin/` and the GRUB screen script in `etc/grub.d/`. The paths in that line are as they were when it was written and were not moved. [The installed OS page](../architecture/installed-os.md#packages-and-updates) says what is built.
 
 From the moment the computer powers on to the desk at rest, every screen is in the design system:
 the dark ground (`#101214`), the text colour (`#e6e8eb`), and the orange (`#d97757`) only on the
@@ -17,9 +18,9 @@ the mark is in [`brand/`](../brand/).
 | --- | --- | --- |
 | Firmware | The maker's own logo, or nothing. Not ours to change. | the machine |
 | Boot loader, live stick | systemd-boot's text menu for three seconds. It has no pictures; the first entry boots by itself. | `iso/efiboot/loader/` |
-| Boot loader, installed | GRUB, hidden unless Esc is held at power-on; with the disk encrypted it asks for the password on the mark in the ground colour. | `share/grub/bombadil/`, `iso/airootfs/etc/grub.d/000_bombadil_screen`, wired by `bombadil-install` (on `main` the menu is hidden, the disk is encrypted when a password was given, and the password screen is on the mark) |
-| Kernel and start-up | An empty console in the ground colour. Nothing is printed unless a start fails; no cursor, no kernel logo, no Hyprland banner. | the kernel parameters in this page, `greetd/config.toml` |
-| The desk | The wallpaper under the cards, the pill and every window. | `hyprland.lua`, `shell/Wallpaper.qml` |
+| Boot loader, installed | GRUB, hidden unless Esc is held at power-on; with the disk encrypted it asks for the password on the mark in the ground colour. | `share/grub/bombadil/`, `packaging/bombadil/root/etc/grub.d/000_bombadil_screen`, wired by `bombadil-install` (on `main` the menu is hidden, the disk is encrypted when a password was given, and the password screen is on the mark) |
+| Kernel and start-up | An empty console in the ground colour. Nothing is printed unless a start fails; no cursor, no kernel logo, no Hyprland banner. | the kernel parameters in this page, `packaging/bombadil/root/usr/share/bombadil/greetd/config.toml` |
+| The desk | The wallpaper under the cards, the pill and every window. | `share/hypr/bombadil.lua`, `shell/Wallpaper.qml` |
 
 Each stage changes the screen once, to the next one's ground, so nothing flashes from black to dark
 grey on the way. The desk's ground is the console's ground is the GRUB theme's ground.
@@ -45,7 +46,7 @@ the same job: the screen stays the ground colour from the loader to the desk.
 
 ## Why the desk was black
 
-`hyprland.lua` set `misc.background_color = 0x101214`. Hyprland reads that as `0xAARRGGBB`, so
+The Hyprland config (now `share/hypr/bombadil.lua`) set `misc.background_color = 0x101214`. Hyprland reads that as `0xAARRGGBB`, so
 `0x101214` is alpha `00`, red `10`, green `12`, blue `14`, and it draws a colour with no alpha as pure
 black. Every boot, and every screenshot of the desk, showed `(0, 0, 0)` behind the cards. The value
 is `0xff101214` now. `tests/test_boot_console.py` fails if it loses its alpha again.
@@ -103,9 +104,10 @@ folder from QML. `share/` sits beside `shell/` in the repository and in the inst
 
 `~/.config/bombadil/wallpaper` names the picture: the last line that is not a `#` comment is the path
 of any image (so adding a line changes it) (`~/` and `file://` work). New systems ship the file with only comments in it (from
-`iso/airootfs/etc/skel`), because a file that does not exist cannot be watched; with the comments
-there the bar notices a first path, and every change after it, at once, with no restart. A system installed before the file was shipped needs the file created and the bar started again once,
-because a file that was not there when the bar started is not watched. Emptying the
+`packaging/bombadil/root/etc/skel`), because a file that does not exist cannot be watched; with the comments
+there the bar notices a first path, and every change after it, at once, with no restart. A system installed before the file was shipped gets it from homefix the first time agentd starts after an
+update. The bar may have started a moment before, and a file that was not there when the bar started is not
+watched, so the first picture is noticed after the bar's next start (the next sign-in). Emptying the
 file or deleting it brings the standard picture back. A picture that will not load falls back to the
 standard one, and so does a line that is not a path: an image written into the file itself (the usual
 mistake) logs one line, `wallpaper: ... holds the path of an image, on one line, not the image itself`,
@@ -132,7 +134,7 @@ colour fails it.
 ## The quiet console
 
 The live system's boot entry (`iso/efiboot/loader/entries/01-bombadil.conf`) and an installed
-system's GRUB drop-in (`iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg`) carry the same
+system's GRUB drop-in (`packaging/bombadil/root/etc/default/grub.d/zz-bombadil-console.cfg`) carry the same
 kernel parameters:
 
 | Parameter | What it does |
@@ -156,7 +158,7 @@ install or refresh a disk), keep their kernel output: the VM tests read them on 
 
 Between the kernel and Hyprland, greetd runs `start-hyprland`, and greetd's standard output is the
 console. Hyprland writes a banner and a screenful of start-up debugging there until its config is
-read. `greetd/config.toml` now runs it as `systemd-cat -t hyprland start-hyprland`, which sends that
+read. greetd's config (`packaging/bombadil/root/usr/share/bombadil/greetd/config.toml`) now runs it as `systemd-cat -t hyprland start-hyprland`, which sends that
 text to the journal (`journalctl -t hyprland`) instead. Nothing is lost; it is not on the screen.
 
 ## Not here

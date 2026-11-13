@@ -16,6 +16,8 @@ The page with the drawn mock-ups is [pages/bombadil-tends-itself.html](pages/bom
 
 Refs: `main` = the `main` branch at commit d9dde3b (30 Sep 2026, after the Super tap fix). `kit`, `dev`, `brain` and `login` are the unmerged work for the app kit, the coding sessions, the brain and native sign-in, as it stood then (all four have since merged to `main`: the kit, the brain and native sign-in by 2026-09-30, and the coding sessions on 2026-11-08). A citation such as `main:src/bombadil/agentd.py:540-545` is a file and line at that commit (read it with `git show d9dde3b:src/bombadil/agentd.py`), and "today" in this brief means 30 Sep 2026 at that commit. UB, DB, BB, WB and RB are the [ux](ux-brief.md), [dev](dev-brief.md), [brain](brain-brief.md), [widgets](widgets-brief.md) and [riding](passenger-brief.md) briefs; a citation such as UB:140 is a line of that brief as it was written then, so find it by the words quoted beside it. "Inferred" marks what I did not check myself.
 
+Paths cited as `main:` are where the file was at that commit: the commands, units, skel and installer scripts under `iso/airootfs/` have since moved to `packaging/bombadil/root/`, and the Hyprland config to `share/hypr/bombadil.lua` (see [installed OS](../architecture/installed-os.md#packages-and-updates)).
+
 ## What it looks like
 
 **Tuesday 09:05.** The person opens the laptop. Wallpaper, the pill, and the desk's Away card, which was going to rise anyway after a night away: "batch finished, 300 done", "reviewer is waiting [Open]", and one orange row, "Changed 2 things about itself [See]", with two muted lines under it: "New apps no longer open on top of each other." "The agent restarts in 1 s instead of 4." They tap Open on reviewer and the card goes. Right of the pill a small chip reads "noticed 1". They ignore it all morning.
@@ -164,7 +166,7 @@ Words like "still", "won't", "stuck" in the person's prompts never make a findin
 | The finished line covered a new app | open | bar rectangles against the new window | same as above |
 | Every new app opened at one spot | open | the stacked-apps invariant | here: placement is Python the tests can prove |
 | Chromium's first-run dialog blocked sign-in | fixed in the native sign-in work | only on a fresh profile, so the room or the project's VM | report |
-| QEMU's screen stuck at 640×480 | fixed by hand in skel | the monitor-size invariant | a one-tap fix to the person's own hyprland.lua, plus a report, because skel is copied once and the fix never reaches an installed machine |
+| QEMU's screen stuck at 640×480 | fixed by hand in skel | the monitor-size invariant | a one-tap fix to the person's own hyprland.lua, plus a report, because skel was copied once and the fix never reached an installed machine (since the config split a fix to `share/hypr/bombadil.lua` arrives with an update) |
 
 Since then, on main at 26843d3, the finished-line overlap and the stacked-apps placement are fixed (commits 96546a7, 74440c5 and 528603b).
 
@@ -187,7 +189,7 @@ A seventh, "the launcher smoke check passed for the wrong reason", is a bug in a
 A rung grows only when a change merged by a person adds the check that proves it. The first such step is the room: when it can run Hyprland, shell QML moves from rung 4 to rung 3.
 
 **The mender session.** A dev-layer session (DB) with role `mender`, project Bombadil, named for the finding (`apps-stacked`), started by agentd when the budget allows.
-- *Its copy:* `~/Projects/.work/Bombadil/<fp>`, checked out at the exact commit the machine runs. The installed tree has no commit stamp and no `.git` today (main:scripts/build-iso.sh:14 copies bin, src, shell and share), so the image gains a VERSION stamp and the loop keeps a clone.
+- *Its copy:* `~/Projects/.work/Bombadil/<fp>`, checked out at the exact commit the machine runs. The installed tree had no commit stamp and no `.git` (main:scripts/build-iso.sh:14 copied bin, src, shell and share); the package build now writes `/usr/share/bombadil/VERSION` (`YYYY.MM.DD (commit)`), and the loop keeps a clone.
 - *Out of sight:* a dot in the Bombadil chip, no window. `Dev.open` takes no task and `_show` always opens a window today (dev:src/bombadil/dev.py:272, 481), so both change.
 - *The fence:* DB piece 3 (`setpriv --no-new-privs`, its own slice with a memory limit, its own ports), no os-mcp, no web. Designed, not built: on `main` at `7d17600` a coding session has its own `git worktree` and the `BOMBADIL_SESSION` mark, and no `setpriv`, no memory limit and no ports of its own.
 - *Its permissions are set by its role, not by the flags agentd uses for the person's turns* (`--permission-mode bypassPermissions --dangerously-skip-permissions`, main:providers.py:99-101). Allowed: git, python, pytest, ruff, qmllint, `bombadil-check`, `bombadil-room`. Denied: sudo, ssh, push, the network, and the protected paths. The repository's own `.claude/settings.json` pre-approves `Bash(sudo *)` (line 27), so the mender runs with managed settings that must outrank it (inferred; to verify).
@@ -205,11 +207,11 @@ The room is the one unknown that decides how much it can fix. Hyprland does not 
 
 **Quiet or noticeable.** A fix is *noticeable* when its diff touches what the person sees or types into (shell QML, window placement, launcher words, the look of apps or the kit), what the agent is told (system prompt, skill, memory), or anything that leaves the machine. Everything else is *quiet*. Quiet fixes land at the next calm moment and show in Away and Time with Undo. Noticeable ones wait in Noticed as a card with two pictures, before and after, "Checked 4 ways, reviewed by Codex", and [Use it] [Not now]; ready for 7 days, then dropped and kept as a proposal.
 
-**Landing as a generation.** Bombadil's own code today sits at /usr/share/bombadil, copied in by build-iso.sh and linked from /usr/local/bin.
+**Landing as a generation.** Bombadil's own code today sits at /usr/share/bombadil, installed there by the `bombadil` package, with a link for each command in /usr/bin.
 1. agentd (not the session) exports the tested tree to `~/.local/share/bombadil/gen/<sha>/{bin,src,shell,share}` with a manifest: base commit, tree hash, gate results, and what it needs from the system (`requires`).
 2. It waits for a calm moment (away, empty queue), flips the `current` link to the new generation, keeps `previous`, and restarts only what changed.
-3. `paths.share_dir()`, the kit's `qml_dirs()` (kit:src/bombadil/appkit/engine.py:18-21), the /usr/local/bin stubs and the shell's launcher resolve through `current` when it is blessed, and fall back to /usr/share/bombadil otherwise. A running process stays on the generation it started with and never mixes two.
-4. The first generations need one "install this build" (DB:182): an ordinary turn that ships the resolving stubs and a launcher line in place of `quickshell -p /usr/share/bombadil/shell/shell.qml` in hyprland.lua (main:iso/airootfs/etc/skel/.config/hypr/hyprland.lua:9). An installed machine holds its own copy of that file, so this takes the person's tap once.
+3. `paths.share_dir()`, the kit's `qml_dirs()` (kit:src/bombadil/appkit/engine.py:18-21), the /usr/bin links and the shell's launcher resolve through `current` when it is blessed, and fall back to /usr/share/bombadil otherwise. A running process stays on the generation it started with and never mixes two.
+4. The first generations need one "install this build" (DB:182): an ordinary turn that ships the resolving stubs and a launcher line in place of `quickshell -p /usr/share/bombadil/shell/shell.qml` in the Hyprland config (main:iso/airootfs/etc/skel/.config/hypr/hyprland.lua:9, now `share/hypr/bombadil.lua`). That file is Bombadil's part, which the package carries and the home's own `hyprland.lua` only loads, so the line changes with a package update and no longer needs a change to a file the person holds.
 
 Packages, /etc, the kernel and boot never change by generation. They are rung 4.
 
@@ -413,7 +415,7 @@ Kept unchanged: no popups; one turn, one restore point; bare "undo" means the ma
 - **Metering is moving.** Headless CLI billing was announced and paused. The loop shares the person's plan windows with the pill; it degrades to finding and reporting if that changes. An API-key path is unresolved.
 - **Grouping is unproven on real data,** and one person may produce few offers. The precision check before building and four weeks of counted answers decide the numbers.
 - **Generations and root undo can skew.** A root rollback can leave a generation needing a newer package; the manifest's `requires` makes the stubs fall back to the system tree, and the fix waits for "install this build".
-- **Config split.** skel is copied once at install, so fixes to hyprland.lua never reach an installed machine (the 640×480 fix is an example). Open: split the file into a system part and the person's part.
+- **Config split.** Built. skel used to be copied once at install, so a fix to hyprland.lua never reached an installed machine (the 640×480 fix is an example). Bombadil's part of the config is now `share/hypr/bombadil.lua`, which the package carries and the person's `hyprland.lua` loads, so a fix to it arrives with an update ([installed OS](../architecture/installed-os.md#the-hyprland-config)).
 - **The loop's own bugs** are protected from the mender, so they are always reports and need a person.
 - **Privacy.** The ledger holds the person's words; they stay on the machine, only up to eight reach the fast model per offer, and reports carry counts, never words.
 - **Reviewer independence** is weak when one provider is signed out, and models of one family share blind spots.

@@ -1,0 +1,18 @@
+# Files that another package owns are changed by numbered steps, and a package upgrade can put the original
+# back: pacman.conf comes with pacman, /etc/environment with pam, os-release with filesystem.
+#
+# Every transaction runs the steps, not only one that changes those packages. A pacman.conf that the person replaced
+# with pacman's new default (a .pacnew merge) has lost [bombadil], and pacman then no longer knows this package: only
+# a step that runs on a later transaction of any package can put the repository back. The steps look at the files
+# and say nothing when there is nothing to do, so this costs a few milliseconds. (A transaction that puts back
+# /usr/lib/os-release is one of filesystem, which this trigger already covers.)
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = *
+
+[Action]
+Description = Bombadil: checking the files other packages own
+When = PostTransaction
+Exec = /usr/share/bombadil/migrate/run

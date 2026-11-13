@@ -27,6 +27,7 @@ the decision log and the roadmap.
   the roadmap if you decided or shipped something. [How, and what never to commit](docs/contributing/documenting.md).
 - **If the change adds something a person can ask, add its tip too.** The tip row and its scene go in the same
   pull request, gated by a `needs` flag until the code is on `main` ([how](docs/TIPS.md#how-a-tip-is-added)).
+- **If the change adds a file to the system** (a unit, a config file, a command), put it where the `bombadil` package expects it. [Packages and updates](docs/architecture/installed-os.md#packages-and-updates) says where, and how a change to a file that another package owns, or one in the person's home, reaches a machine that is already installed.
 - **Check the docs:** `python3 docs/tools/check_docs.py --mermaid` (the flag needs Mermaid's CLI; leave it off without it).
 - **Describe what a person sees.** Open the pull request description with what it looked like before and
   what it looks like after, then say in a sentence what the change does and how.

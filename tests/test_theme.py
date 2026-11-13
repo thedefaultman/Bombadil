@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from payload import HYPR_LUA, PAYLOAD
 from qml_theme import THEME, THEME_QML
 
 SHELL = Path(__file__).resolve().parents[1] / "shell"
@@ -132,7 +133,8 @@ def test_the_shell_waits_longer_than_qt_does_for_a_slow_compositor_to_answer_a_f
 def test_nothing_launches_quickshell_without_the_kit_path():
     # A bare `quickshell -p .../shell.qml` starts a bar whose colours are all undefined.
     root = SHELL.parent
-    for path in (root / "iso" / "airootfs" / "etc" / "skel" / ".config" / "hypr" / "hyprland.lua",
-                 root / "scripts" / "dev-session.sh", root / "tests" / "desktop" / "driver.py"):
+    for path in (HYPR_LUA, root / "scripts" / "dev-session.sh", root / "tests" / "desktop" / "driver.py"):
         assert not re.search(r"quickshell\W+-p\s+\S*shell\.qml", path.read_text()), path.name
-    assert "bombadil-shell" in (root / "scripts" / "build-iso.sh").read_text()
+    # The image starts the bar through the launcher the package links into /usr/bin, which sets the path.
+    assert (root / "bin" / "bombadil-shell").is_file()
+    assert "ExecStart=/usr/bin/bombadil-shell" in (PAYLOAD / "usr/lib/systemd/user/bombadil-shell.service").read_text()

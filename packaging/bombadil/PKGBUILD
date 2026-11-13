@@ -1,0 +1,47 @@
+# Bombadil as one package. scripts/build-package.sh stages the tree and runs makepkg on this file.
+#
+# BOMBADIL_STAGE is a mirror of / that holds everything the package owns: the share tree at
+# /usr/share/bombadil (with the VERSION file), and packaging/bombadil/root for the rest.
+pkgname=bombadil
+pkgver=${BOMBADIL_PKGVER:?BOMBADIL_PKGVER is set by scripts/build-package.sh}
+pkgrel=${BOMBADIL_PKGREL:-1}
+pkgdesc="Bombadil: an agent in the desktop"
+arch=(any)
+license=(MIT)
+# Only names that iso/packages.x86_64 lists, so the image has them all. sudo comes first so /etc/sudoers.d is
+# sudo's own directory (mode 750) before this package's file goes into it.
+depends=(sudo pacman systemd python python-cryptography python-httpx python-mcp pyside6 quickshell
+         qt6-declarative qt6-5compat qt6-wayland hyprland greetd foot tmux nodejs chromium thunderbird
+         poppler grim slurp wl-clipboard libnotify snapper btrfs-progs cryptsetup gptfdisk parted
+         dosfstools grub efibootmgr mkinitcpio arch-install-scripts networkmanager)
+source=()
+options=(!strip !debug !docs !emptydirs)
+install=bombadil.install
+# What a person may change and an update must not take back: the settings, the repository list and the sudoers file (a
+# person who tightens NOPASSWD keeps the rule; the new file arrives beside it as .pacnew, which sudo ignores because
+# the name has a dot in it). Every other file in /etc is Bombadil's own policy or default and is replaced by each
+# update on purpose, so a change in the source reaches every machine with the package: the managed settings of
+# Chromium, Claude Code, Codex and Thunderbird, the default browser (mimeapps.list), the GRUB console parameters and
+# the GRUB screen script. A person's own choices go in their home or in a file of their own, not in those.
+backup=(etc/bombadil/config.toml etc/pacman.d/bombadil.conf etc/sudoers.d/bombadil)
+
+package() {
+  : "${BOMBADIL_STAGE:?BOMBADIL_STAGE is set by scripts/build-package.sh}"
+  # No ownership from the build user: the package holds root.
+  cp -a --no-preserve=ownership "$BOMBADIL_STAGE/." "$pkgdir/"
+  # The staging tree took its modes from a checkout and the builder's umask. A file the person's own programs
+  # (the agent runs as user) cannot read would break every start, so the modes are set here, not trusted.
+  find "$pkgdir" -type d -exec chmod 755 {} +
+  find "$pkgdir" -type f -exec chmod go-w,a+rX {} +
+  # Git cannot hold 0440. The folder is sudo's, which keeps it at 750: the same mode here, so pacman has nothing to say.
+  chmod 750 "$pkgdir/etc/sudoers.d"
+  chmod 440 "$pkgdir/etc/sudoers.d/bombadil"
+  # Every launcher finds src/ through its own resolved path, so /usr/bin holds links, never copies.
+  install -d "$pkgdir/usr/bin"
+  local f
+  for f in "$pkgdir"/usr/share/bombadil/bin/*; do
+    if [[ -f "$f" ]]; then
+      ln -s "../share/bombadil/bin/${f##*/}" "$pkgdir/usr/bin/${f##*/}"
+    fi
+  done
+}

@@ -39,6 +39,8 @@ from pathlib import Path
 
 import pytest
 
+from payload import HYPR_LUA
+
 from bombadil import paths
 from bombadil.mail import accounts as accts
 from bombadil.mail import engine, fake
@@ -1621,7 +1623,7 @@ def test_which_classes_are_thunderbirds_windows(cls, yes):
 
 
 def test_the_pattern_is_the_one_the_window_rule_of_the_image_uses():
-    lua = (REPO / "iso" / "airootfs" / "etc" / "skel" / ".config" / "hypr" / "hyprland.lua").read_text()
+    lua = HYPR_LUA.read_text()
     rule = next(ln for ln in lua.splitlines() if 'name = "mail-engine"' in ln)
     assert 'class = "(?i)^(.*\\\\.)?thunderbird.*$"' in rule and engine._WINDOW_CLASS.pattern == "(?i)^(.*\\.)?thunderbird.*$"
     assert 'workspace = "special:mail-engine silent"' in rule and engine.ENGINE_WORKSPACE == "special:mail-engine"

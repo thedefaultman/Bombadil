@@ -1,0 +1,5 @@
+# System units the package turns on once (bombadil.install). One name per line.
+# Not listed: bombadil-live and pacman-init, which only the live stick has.
+bombadil-brain-watch.service
+bombadil-connect.service
+bombadil-smoke.service

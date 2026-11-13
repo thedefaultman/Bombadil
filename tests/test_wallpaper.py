@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from payload import PAYLOAD
 from qml_theme import THEME
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -224,7 +225,7 @@ def test_a_picture_of_the_users_own_is_dimmed_so_muted_text_reads_over_the_brigh
 
 def test_the_file_new_systems_ship_holds_only_comments_so_the_standard_picture_shows_and_can_be_watched():
     # A file that does not exist cannot be watched, so a first path would want the bar started again.
-    shipped = ROOT / "iso" / "airootfs" / "etc" / "skel" / ".config" / "bombadil" / "wallpaper"
+    shipped = PAYLOAD / "etc" / "skel" / ".config" / "bombadil" / "wallpaper"
     lines = [ln for ln in shipped.read_text().splitlines() if ln.strip()]
     assert lines and all(ln.lstrip().startswith("#") for ln in lines)
     text = code(SHELL / "Wallpaper.qml")
