@@ -880,8 +880,9 @@ boot entries `03` to `06` write `/dev/vda` without asking.
   (`RestartSec=1`).
 - **The serial pump's XON stops GRUB's menu countdown** on an install that shows the menu; press
   Enter with `vmin keys ret`. The installer hides the menu, so a normal install boots by itself.
-- **A pinned screen passes `virtual-display-size`.** `wsl-vm.sh` pins the installed `share/hypr/bombadil.lua` to `RES`
-  (1600x900 by default), and the check fails a `Virtual-` display only when it is narrower than 1280 px,
+- **A pinned screen passes `virtual-display-size`.** `wsl-vm.sh` appends an `hl.monitor` line for `RES`
+  (1600x900 by default) to the person's `~/.config/hypr/hyprland.lua`, under the stub that loads Bombadil's part,
+  after the install, and the check fails a `Virtual-` display only when it is narrower than 1280 px,
   so only a pin below that width fails it.
 - **Two VMs need memory for both.** `run-vm.sh` defaults to 6G and `scratch-up` to 3G; on a small host
   give the scratch VM less (`MEM=2G scratch-up`).

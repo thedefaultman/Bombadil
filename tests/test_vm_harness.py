@@ -934,6 +934,19 @@ def test_wsl_vm_builds_serves_and_refreshes_the_way_the_laptop_flow_is_documente
     assert "  refresh) refresh; run --installed ;;" in text and "  update) update ;;" in text
 
 
+def test_the_isos_key_names_every_script_that_the_iso_build_runs():
+    # A commit that changes a script the ISO build runs must not reuse the last ISO. The scripts are the ones build-iso.sh
+    # (and build-package.sh, which it runs) call from scripts/, comments left out.
+    key = re.search(r"^iso_key\(\) \{.*\}$", WSL_VM.read_text(), re.M).group(0)
+    keyed = set(re.findall(r"\bHEAD:(scripts/[\w.-]+\.sh)\b", key))
+    called = {"scripts/build-iso.sh"}
+    for script in (BUILD_ISO, ROOT / "scripts/build-package.sh"):
+        code = [ln for ln in script.read_text().splitlines() if not ln.lstrip().startswith("#")]
+        called |= set(re.findall(r"\$root/(scripts/[\w.-]+\.sh)\b", "\n".join(code)))
+    assert {"scripts/build-package.sh", "scripts/pacman-conf-with-repo.sh"} <= called, called
+    assert called - keyed == set(), sorted(called - keyed)
+
+
 def test_the_installs_monitor_pin_is_a_line_of_the_persons_under_the_stub():
     text = WSL_VM.read_text()
     install = text[text.index("\ninstall() {") : text.index("\n}\n", text.index("\ninstall() {"))]

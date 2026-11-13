@@ -59,12 +59,13 @@ empty line; the script does it).
   run the new agentd and bar. GRUB's menu is not regenerated: after a change to GRUB's defaults in
   `/etc/default/grub` run `sudo bombadil-grub-config` (it runs `grub-mkconfig` the way the installer does, in
   the C locale and with the "Loading ..." lines cut; do not run `grub-mkconfig` itself on a layout-1 disk, see
-  docs/INSTALLED-OS.md, "What GRUB shows", and docs/ARCHITECTURE.md). The person's own files stay theirs: `~/.config/hypr/hyprland.lua` loads Bombadil's part
-  from the package, and a line they or the launcher put under it, such as the `Virtual-1` pin, stays (so the
-  smoke's `virtual-display-size` fails here).
+  docs/architecture/installed-os.md, "What GRUB shows"). The person's own files stay theirs:
+  `~/.config/hypr/hyprland.lua` loads Bombadil's part from the package, and a line they or the launcher put
+  under it, such as the `Virtual-1` pin, stays (the smoke's `virtual-display-size` fails only for a pin narrower than
+  1280 px).
 - **Windows**: the Windows key opens the Start menu, not the pill (use Alt+Space once it is on the
   VM); the window opens small, Ctrl+Alt+F makes it full screen and again leaves it; do not resize or
   minimise the window from Windows scripts (it went black, then full screen). If the window never
-  shows and `/mnt/wslg/stderr.log` says `msrdc.exe ... exited` every 31 s, WSLg's window link is
+  shows and `wslg/stderr.log` under `/mnt` says `msrdc.exe ... exited` every 31 s, WSLg's window link is
   stuck: power the guest off (`vmsh 'sudo systemctl poweroff'`), run `wsl --shutdown` in Windows,
   start the VM again.

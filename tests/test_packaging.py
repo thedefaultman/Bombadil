@@ -223,6 +223,17 @@ def test_build_package_builds_as_a_throwaway_user_from_a_clean_cache_into_a_repo
     assert "--exclude=__pycache__" in text and "--exclude='*.pyc'" in text
 
 
+def test_build_package_makes_its_work_directory_absolute_before_any_path_is_made_from_it():
+    # WORK=work scripts/build-iso.sh: makepkg runs after a cd into the package directory, and BOMBADIL_STAGE and PKGDEST
+    # (made from the work directory) would name a place that is not there from inside it.
+    text = BUILD_PACKAGE.read_text()
+    absolute = 'work="$(cd "$work" && pwd)"'
+    assert text.count(absolute) == 1
+    assert text.index('work="${WORK:-/tmp/bombadil-work}"') < text.index(absolute)
+    assert text.index(absolute) < text.index('stage="$work/pkgstage" pkg="$work/pkg" out="$work/pkg/out"')
+    assert text.index(absolute) < text.index('cd "$pkg" && ')
+
+
 # 2026-12-01 00:20 UTC: still 30 November, and in November, for a host ten hours west of UTC.
 JUST_AFTER_MIDNIGHT_UTC = "1796084400"
 

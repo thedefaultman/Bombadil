@@ -98,12 +98,12 @@ Switching provider (`launcher` words, `bombadil provider`, `agentd.AgentD.choose
 
 ## Interfaces other pieces depend on
 
-The executable is `bin/bombadil-os-mcp`; the ISO links it as `/usr/local/bin/bombadil-os-mcp` (`scripts/build-iso.sh`). The server's name is `bombadil-os`: it is the key in both CLIs' declarations, and the prefix `mcp__bombadil-os__` of every tool name that `narrate.tool_step` and the provider adapters read.
+The executable is `bin/bombadil-os-mcp`; the `bombadil` package links it as `/usr/bin/bombadil-os-mcp` (`package()` in `packaging/bombadil/PKGBUILD`). The server's name is `bombadil-os`: it is the key in both CLIs' declarations, and the prefix `mcp__bombadil-os__` of every tool name that `narrate.tool_step` and the provider adapters read.
 
 ### What the machine must provide
 
 - **Python 3.11 or newer, and nothing from outside the standard library.** `pyproject.toml` has `requires-python = ">=3.11"` and `dependencies = []`; `apps.py` imports `tomllib`, which Python added in 3.11. Qt is needed only inside the `bombadil-app` subprocess, never in the server.
-- **Hyprland with its Lua configuration, for panels and app windows.** The tools use Lua dispatchers and rules (`hl.dsp.*`, `hl.window_rule`, `eval` over the socket), which `hypr.py:149` dates to 0.55; the review of the first milestone checked 0.56.2, and the ISO ships `share/hypr/bombadil.lua`.
+- **Hyprland with its Lua configuration, for panels and app windows.** The tools use Lua dispatchers and rules (`hl.dsp.*`, `hl.window_rule`, `eval` over the socket), which `hypr.py:149` dates to 0.55; the review of the first milestone checked 0.56.2, and the package ships `share/hypr/bombadil.lua`.
 - Everything else is per tool and listed under `Needs` below: a tool whose part is missing answers in words or with an error and the server carries on.
 
 ### The protocol the server speaks
@@ -153,7 +153,7 @@ The executable is `bin/bombadil-os-mcp`; the ISO links it as `/usr/local/bin/bom
 - **Other people's words.** `mail_search` rows and `mail_read` text sit between two marks that carry a random word per call, so a mail cannot close the mark early and pass as the tool. Control characters and text-reversing characters are removed from every field, and hidden "tag" characters from a mail's text and ids; a mail's text is cut at 20,000 characters and any answer at 60,000 (`MAIL_ANSWER_CHARS`).
 - **Not kept.** `agentd` writes `[mail text not kept]` in place of the answers of `mail_read` and `mail_search` in the turn's log and in the events it sends. A turn that has read mail, and the conversation it resumes into, is remembered by the broker in memory only, and its drafts carry `tainted: true` to the service, which warns more strongly about an address the person did not type. A restart of `agentd` forgets it (see "Known gaps").
 - **Degrades.** The os-mcp process itself touches neither Hyprland nor the mail service, and no tool can start or reach Thunderbird. When the service is not running a tool answers `Mail is not running yet.` as an error and the turn goes on.
-- **The skill.** `share/skills/bombadil-mail/SKILL.md` repeats the rules for both CLIs; the ISO's skeleton links it into `~/.claude/skills` and `~/.agents/skills` (`tests/test_iso_profile.py::test_the_mail_skill_reaches_both_clis`).
+- **The skill.** `share/skills/bombadil-mail/SKILL.md` repeats the rules for both CLIs; the package's skeleton (`packaging/bombadil/root/etc/skel`) links it into `~/.claude/skills` and `~/.agents/skills` (`tests/test_iso_profile.py::test_the_mail_skill_reaches_both_clis`).
 
 | Tool | Arguments | What it does | Side effects | Needs |
 |---|---|---|---|---|
@@ -169,7 +169,7 @@ The executable is `bin/bombadil-os-mcp`; the ISO links it as `/usr/local/bin/bom
 - **Other people's words.** `messages_unread`, `message_thread` and `tasks_waiting` return their rows between the same two marks as mail, with a fresh random word on each call. Control, text-reversing and hidden characters are removed, each line of a message's text starts with `> `, one message is cut at 4,000 characters and an answer at 60,000 (`ANSWER_CHARS`), with the cut said inside the marks.
 - **Not kept.** `agentd` writes `[messages and tasks not kept]` in place of the answers of those three tools in the turn's log and in the events it sends. `connections` and `propose` are not in that list, so their answers are kept. A turn that has read any of them is remembered in the same record as a turn that has read mail (`mail.tools.Broker`, which `agentd` gives the connection broker), in memory only, so what the turn then proposes is flagged as written after reading other people's words, and a mail draft after a Slack read is too. A restart of `agentd` forgets it (see "Known gaps").
 - **Degrades.** The os-mcp process itself touches neither Hyprland nor the connection service. When the service is not running a tool answers `Connections are not running yet.` as an error and the turn goes on.
-- **The skill.** `share/skills/bombadil-connect/SKILL.md` repeats the rules for both CLIs, and the ISO's skeleton links it into `~/.claude/skills` and `~/.agents/skills` beside the mail skill. The system prompt does not name these tools.
+- **The skill.** `share/skills/bombadil-connect/SKILL.md` repeats the rules for both CLIs, and the package's skeleton links it into `~/.claude/skills` and `~/.agents/skills` beside the mail skill. The system prompt does not name these tools.
 
 | Tool | Arguments | What it does | Side effects | Needs |
 |---|---|---|---|---|
@@ -236,7 +236,7 @@ On a booted system the session variables reach the server through `agentd`'s own
 | `hyprctl` | `show_panel` and `hide_panel` (`dispatch`), `system_map` `screens` (`-j monitors`); window control for the app tools talks to Hyprland's socket directly |
 | `grim` | `screenshot` |
 | `notify-send` | `notify` |
-| `sudo` with `snapper` and `bombadil-rollback` | `snapshot`, `list_snapshots`, `rollback` (`bombadil-rollback` is an ISO script, `packaging/bombadil/root/usr/bin/bombadil-rollback`; `sudo` needs no password because of `packaging/bombadil/root/etc/sudoers.d/bombadil`) |
+| `sudo` with `snapper` and `bombadil-rollback` | `snapshot`, `list_snapshots`, `rollback` (`bombadil-rollback` is a script of the `bombadil` package, `packaging/bombadil/root/usr/bin/bombadil-rollback`; `sudo` needs no password because of `packaging/bombadil/root/etc/sudoers.d/bombadil`) |
 | the panel programs: `foot`, `nautilus`, the browser from `browser.command()` | `show_panel` |
 | `pgrep` | app state (`placement.running`), `hypr._launching` |
 | `bombadil-app` | `create_app` and `check_app` (`check`), and every tool that starts an app (`run`): found at `bin/bombadil-app` beside `src/` and run with the server's own interpreter, else on `PATH` |

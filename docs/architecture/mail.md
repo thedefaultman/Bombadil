@@ -194,7 +194,7 @@ Mail says four things above the pill. Mail from someone the person knows, as "Pr
 | `bombadil-app check mail`, `BOMBADIL_CHECK=1`, `BOMBADIL_MAIL_SAMPLE` | Loads the window offscreen on sample mail, with no socket. `BOMBADIL_MAIL_SAMPLE` picks the sample screen: `first-run`, `reply`, or the list when it is empty |
 | `BOMBADIL_MAIL_SOCKET`, `BOMBADIL_MAIL_DB`, `BOMBADIL_MAIL_FILES`, `BOMBADIL_MAIL_PROFILE`, `BOMBADIL_PRESS_LOG` | Where the state below lives |
 | `BOMBADIL_MAIL_ENGINE=fake`, `BOMBADIL_MAIL_FAKE_DRIP`, `BOMBADIL_MAIL_THUNDERBIRD` | The fake engine, the seconds between its sample mails, and a Thunderbird binary to run instead of the one on `PATH` |
-| `bombadil-mail.service` | The user unit in `iso/airootfs/etc/systemd/user/`, enabled for every login. `share/hypr/bombadil.lua` hands it the session's display and restarts it, because it starts before there is a screen |
+| `bombadil-mail.service` | The user unit in `packaging/bombadil/root/usr/lib/systemd/user/`, enabled for every login by the package (`enable.user`). `share/hypr/bombadil.lua` hands it the session's display and restarts it, because it starts before there is a screen |
 | `/etc/thunderbird/policies/policies.json` | `DisableAppUpdate`, `DisableTelemetry` and `DontCheckDefaultClient`, from `packaging/bombadil/root/etc/thunderbird/policies/` |
 
 ## Where state lives

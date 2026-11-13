@@ -964,7 +964,7 @@ if [[ "$mode" == "undo" ]]; then
   rm -f "$phase"
 fi
 
-# The update (docs/VM-TESTING.md). The host serves a newer build of the package at 10.0.2.2:8123 (scripts/test-vm.sh),
+# The update (docs/contributing/vm-testing.md). The host serves a newer build of the package at 10.0.2.2:8123 (scripts/test-vm.sh),
 # and pacman installs it as the machine's own update does. The VM has no route to the Arch mirrors, so this run's
 # pacman.conf holds the [options] of the real one and only the [bombadil] section. The restore point comes first and the
 # unit is turned off after it, so the undo that ends the run takes both back. The second boot checks that the old

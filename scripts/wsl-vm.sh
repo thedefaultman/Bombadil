@@ -47,7 +47,7 @@ sync_tree() {
 }
 
 # What goes into the ISO, so a commit that only touches docs or VM scripts reuses the last build.
-iso_key() { git -C "$tree" rev-parse HEAD:bin HEAD:src HEAD:shell HEAD:share HEAD:iso HEAD:install HEAD:packaging HEAD:scripts/build-iso.sh HEAD:scripts/build-package.sh | sha1sum | cut -c1-12; }
+iso_key() { git -C "$tree" rev-parse HEAD:bin HEAD:src HEAD:shell HEAD:share HEAD:iso HEAD:install HEAD:packaging HEAD:scripts/build-iso.sh HEAD:scripts/build-package.sh HEAD:scripts/pacman-conf-with-repo.sh | sha1sum | cut -c1-12; }
 
 build() {
   local key; key=$(iso_key)

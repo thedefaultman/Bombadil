@@ -57,6 +57,7 @@ stage_tree() {  # stage_tree DEST VERSION_LINE
 build_package() {
   local repo="$1" work="${WORK:-/tmp/bombadil-work}" epoch ver rel commit stage pkg out
   mkdir -p "$repo"; repo="$(cd "$repo" && pwd)"
+  mkdir -p "$work"; work="$(cd "$work" && pwd)"  # absolute: makepkg runs after a cd, and its paths come from this one
   epoch="${SOURCE_DATE_EPOCH:-$(date +%s)}"
   ver="${BOMBADIL_PKGVER:-$(day_of "$epoch")}"
   rel="${BOMBADIL_PKGREL:-1}"
