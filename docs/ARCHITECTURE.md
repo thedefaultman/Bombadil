@@ -1,434 +1,148 @@
 # Architecture
 
-## Decisions (2026-09-27)
+> **Status:** Partly shipped
+> **Code:** `bin/`, `src/bombadil/`, `shell/`, `share/`, `packaging/`, `iso/`, `install/`
+> **Design:** [Design briefs](design/README.md), [Principles](principles.md)
+> **Verified:** 2026-11-12 against `main` at `7d37bc5`, for what changed since `7d17600`, read in the code and not run: the Status column of every row against the Status block of the page it points at (all twenty rows, with the installed OS and idle cost rows added); the desk, tips, installed OS and idle cost rows and the three paragraphs added under the table, against the openings of their pages and the code they name (the `tips` widget and `kept` in `src/bombadil/desk.py`, `TIPS_COMMANDS` and `open_tips` in `src/bombadil/launcher.py`, the Tips comment and `AgentD._tips_open` in `src/bombadil/agentd.py`, `WEEK_DAYS` in `src/bombadil/tips.py`, `summon` in `shell/PillState.qml`, `tipsWanted` in `shell/DeskState.qml`, the layout in the header of `iso/airootfs/usr/local/bin/bombadil-install`, `bombadil-rollback`, and the watch in `tests/desktop/idle.py` and `bombadil-smoke`); the labels of the diagram of the parts; and the rows of the code table for `src/bombadil/`, `shell/`, `share/qml/Bombadil/` (`qmldir`, `INTERNAL_COMPONENTS` in `src/bombadil/appkit/check.py`), `share/apps/`, `share/grub/` (`grub_theme` in `bombadil-install` and `000_bombadil_screen`), `install/` (`carry.list`, `scripts/build-iso.sh`) and `iso/`. A second pass on 2026-11-13 against the same commit read again, and ran nothing, the sentence and the row on idle cost (the limits in `tests/desktop/idle.py` and the pill's clock timer in `shell/shell.qml`). Before that, 2026-11-09 against `main` at `ca7f80a`: the turn below, the diagram of the parts and the desk and coding-sessions rows were read again in `src/bombadil/agentd.py` (`handle`, `_greet`, `_dev_broadcast`, `dev_action`, and every change since `9d5c729`), `src/bombadil/launcher.py` (`_dev_match`, and that no word starts `tell`, `give`, `review` or `ship`), `src/bombadil/dev.py` (`_start`, `_checkout_taken`, `_make_copy`, `_bare`, `session_env`), `src/bombadil/away.py`, `src/bombadil/desk.py` (`WIDGETS`, `ASKABLE`), `bin/bombadil`, `bin/bombadil-signal`, `share/zellij/config.kdl`, `shell/shell.qml` (where the chips row sits and what the bar's zone counts), `shell/DevState.qml` and `shell/DeskState.qml`; the code table against the folders `bin/`, `share/`, `iso/`, `scripts/` and `tests/`, the docstring of `bin/bombadil-mail-host` and the user units and `hyprland.lua` under `iso/airootfs/etc/`; the Status column against the Status block of each page in `architecture/`, and the wording of each row of the parts table against the opening of its page. Read on 2026-11-08 at `9d5c729` and not again, because `git diff 9d5c729 ca7f80a` shows no change in them: `src/bombadil/config.py`, `src/bombadil/snapshots.py`, `src/bombadil/narrate.py`, `src/bombadil/mcp_server.py`, `shell/StatusLine.qml` and `shell/PillState.qml`; `src/bombadil/providers.py` changed only in its limit code, which no sentence here depends on. The foundation table was checked against [the foundation brief](design/foundation-choices.md) and the dates in [the decision log](decisions/foundation-and-stack.md) on 2026-11-08, and its agent-runtime row against the brief again on 2026-11-09. What changed between `ca7f80a` and `f0485c2` was added and checked against `f0485c2`: the voice and tips rows with their Status and the shell row's welcome line and name card (against the openings of their pages), the label on the socket in the diagram of the parts and the paragraph on the voice under it (`src/bombadil/voice.py`), the system prompt in step 3 of the turn (`system_prompt` in `src/bombadil/providers.py` and `note` in `src/bombadil/persona.py`), and the rows of the code table for `src/bombadil/`, `shell/`, `share/qml/Bombadil/`, `share/voice/` and `share/tips/`. What changed between `f0485c2` and `7d17600` was added and checked against `7d17600`: the connect row with its Status and the contract marks on the mail, brain, tips and connect rows (against the Status block and the opening of each page in `architecture/` and the opening of `docs/CONNECT.md`), the Status column of every row (against the Status block of every page in `architecture/`), the desk, shell and session services rows (against the openings of their pages, `src/bombadil/desk.py`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` and `iso/packages.x86_64`), the connection service in the diagram of the parts and in the paragraph under the table (`src/bombadil/connect/tools.py`, `src/bombadil/browserd/service.py`, `src/bombadil/cards.py`, `src/bombadil/notifications.py`, the press in `src/bombadil/agentd.py` and `src/bombadil/connect/service.py`, and the unit and the sysusers file of the connection service), step 4 of the turn, and the rows of the code table for `bin/`, `src/bombadil/`, `shell/`, `share/connect/`, `iso/` and `tests/` (against `scripts/build-iso.sh`, the files they name, and the imports of `src/bombadil/connect/`, `src/bombadil/browserd/` and `src/bombadil/ws.py`). The rest of the page was not read again. On 2026-11-13 the sentences about the `bombadil` package (the installed OS row, the paragraph under the table, and the `packaging/`, `iso/`, `install/`, `scripts/` and `tests/` rows) were read against `packaging/bombadil`, `scripts/build-package.sh`, `scripts/build-iso.sh` and `src/bombadil/homefix.py`, and nothing was run.
 
-| Choice | Pick | Why |
-|---|---|---|
-| Base | Arch + btrfs/snapper | Agents know it; rolling graphics stack; archiso; snapshots are the undo |
-| Display | Hyprland now, custom compositor later | Slide-in special workspaces and IPC out of the box; a browser needs a real Wayland server |
-| First target | QEMU VM, ISO also boots hardware | Fast loop while the core changes daily |
-| Agent runtime | Official Claude Code / Codex CLIs wrapped by `agentd` | Logins and subscriptions just work; vendor tool use for free |
-| Generated apps | QML via PySide6, `~/Apps/<name>/` | No build step, hot reload, real windows, no ports |
-| Provider switching | One MCP server (`bombadil-os-mcp`) | Same OS abilities whatever the provider |
-| Browser | Chromium with remote debugging on | Agent can drive it while you watch |
+Bombadil is a Linux distribution whose interface is an AI agent. The person types in one pill at the bottom of the screen; the agent, one of the vendors' own command-line programs running in full-access mode, does the work; and every step it takes is shown on screen. On an installed system a restore point is taken before each turn, so the latest turns can be taken back at the next boot; a step marked "can't be undone" is not covered ([restore points](architecture/restore-points.md)). This page is the map: the parts, the path of one turn through them, where the code lives and how far each piece is built. Each part has a page of its own in [`architecture/`](architecture/), with its interfaces, where its state lives and how to extend it.
 
-## One turn
-
-1. The bar (or `bombadil ask`) writes `{"type":"prompt","text":…}` to the socket.
-2. `agentd` takes a snapper snapshot named `turn:<n>: <prompt>`.
-3. It runs the provider CLI once, in full-access mode, resuming the previous session id,
-   with `bombadil-os-mcp` in its MCP config and `providers.system_prompt()` appended.
-4. The CLI's JSON stream becomes `text` / `tool` / `result` events, broadcast to all clients.
-5. The turn is appended to `~/.local/state/bombadil/turns.jsonl`.
-
-"Undo that" is the agent calling `rollback` (or the user running `bombadil undo`):
-`bombadil-rollback` swaps the last `turn:` snapshot in under the name `@`; it applies on
-reboot. Home is its own subvolume and is not rolled back. The disk it works on is below.
-
-## The installed disk (layout 1)
-
-`bombadil-install` writes the one thing no update can change later, so it is written once and
-recorded in `/var/lib/bombadil/install.json` (`"layout": 1`).
-
-| Where | What |
-|---|---|
-| p1, 1 GiB, FAT32, `/efi` | GRUB's core and modules, `grub.cfg`, `grubenv`, and the fallback path `EFI/BOOT/BOOTX64.EFI`. Never rolled back. |
-| p2 | btrfs, inside LUKS2 when a password was given. Top-level subvolumes: `@` (`/`, with `/boot`), `@home`, `@snapshots` (`/.snapshots`), `@log` (`/var/log`), `@pkg` (`/var/cache/pacman/pkg`). |
-| `/boot` | Inside `@`: `vmlinuz-linux`, `initramfs-linux.img` and `initramfs-linux-fallback.img`, so a restore point holds the kernel that goes with its modules and an undo cannot start a kernel whose modules are gone. |
-| `@home` | Nested subvolumes that a restore point of the home folder skips: `.cache`, `.local/state/bombadil`, `.claude`, `.codex`, `.local/share/claude`, `.config/chromium`, `.local/share/bombadil/browser`, `Projects`. |
-
-`@log` and `@pkg` sit beside `@` because undo replaces `@`: the logs of a bad start, and the
-packages downloaded since, survive the undo. `/etc/fstab` names the disks by identifier and the
-system by subvolume, so a snapshot swapped in under the name `@` mounts like the one it replaced.
-GRUB reads the kernel from `/@/boot`, so `grub.cfg` stays right after any undo.
-
-snapper has two configs, `root` and `home`, with no hourly snapshots (one is taken per agent
-turn) and the newest 30 kept by `snapper-cleanup.timer`.
-
-**Encryption.** With a password the disk is LUKS2 with three ways in: the password (argon2id at
-256 MiB, the cost GRUB can pay on firmware that fragments low memory; typed once, at GRUB), a
-random key file inside the initramfs (so the initramfs opens the disk without asking again),
-and a recovery key from `systemd-cryptenroll`, kept in `/var/lib/bombadil/recovery-key`
-(mode 600, inside the encrypted disk) until the first start shows it once. The same password is
-the account's. The initramfs is systemd's (`sd-encrypt`, `/etc/crypttab` with `x-initrd.attach`).
-
-**The plan.** The install card (a later piece) writes a JSON plan and gives the password on a
-file descriptor, never in a file, an argument or the log: `bombadil-install --plan FILE
---password-fd N`. `src/bombadil/installplan.py` checks every field before anything is touched
-(disk, mode, time zone and where it came from, keymap, computer name, what to carry, whether to
-encrypt, internal or USB) and is also the place `install/carry.list` is read: the home paths that
-may come along from the stick (the sign-in, the chosen AI, made apps, the browser profile).
-`bombadil-install DISK --yes` is the plan-less form the tests and the VM helper scripts use: no password,
-no encryption.
-
-**Refresh** (`bombadil-install --refresh DISK`) gives a disk a new system under the home folder
-that is already there. Everything that can be read is read first, so a disk that is not a
-Bombadil disk, or has Windows on it, is left exactly as it was. Then the old `@` and `@snapshots`
-are renamed `@.before-refresh-<stamp>` and `@snapshots.@.before-refresh-<stamp>` (so an old
-restore point can never be swapped into the new system), the old kernel is put in that system's
-own `/boot` and its fstab pointed at `/efi`, and the EFI partition is emptied, not formatted
-again, so its identifier stays. `@home` is kept and only gains the nested subvolumes above.
-Kept from the old system: the computer's name, time zone, locale, console keymap, machine id,
-Wi-Fi networks, SSH host keys, the account's password, and the list of programs it had that the
-new image does not (`/var/lib/bombadil/refresh-<stamp>.txt`, for the agent to offer back). What
-is carried from the stick never replaces what the home folder already has.
-`bombadil-rollback --device DEV refresh` puts the old system back (the newest one that is whole). It is
-kept until a later cleanup removes it after 14 days.
-
-A refresh changes things in an order that makes a stop harmless. Reading comes first (and a disk with
-less than 10 GB free is refused, since the old system stays beside the new one). The old system is then
-renamed aside and the new one copied in; until the boot files are replaced, which is the very last step,
-a stop puts the old system straight back and says so. A stop after that leaves `var/lib/bombadil/install-incomplete`
-in the half-made system, and running the refresh again starts over from the system that is still aside.
-Undo itself never leaves the disk without an `@`: the snapshot is made beside it first, and the two names
-are exchanged in one step.
-
-Tested by `tests/test_installer.py` (the decisions, as sourced shell functions) and, in a VM, by
-`scripts/test-vm.sh` with `MODE=install`, `install-encrypted` and `refresh`.
-
-## Bombadil as a package
-
-Bombadil's own files (the agent, the bar, the commands, the units, the installer) are one pacman
-package, `bombadil`, that `scripts/build-package.sh` builds with `makepkg` from `packaging/bombadil`
-and the top-level `bin/`, `src/`, `shell/` and `share/`. The image carries the pacman repository it
-was built from in `/var/lib/bombadil/repo`, `/etc/pacman.conf` lists that repository above `[core]`, and
-an update is a newer build of the package taken with `pacman -Syu`. Where a file sits in the source
-tree decides where it lands:
-
-| In the source tree | On a machine |
-|---|---|
-| `bin/`, `src/`, `shell/`, `share/`, `install/` | `/usr/share/bombadil/`, with `/usr/bin/NAME` a link to each `bin/NAME` |
-| `share/hypr/bombadil.lua` | `/usr/share/bombadil/share/hypr/bombadil.lua`, which the person's `~/.config/hypr/hyprland.lua` loads first |
-| `packaging/bombadil/root/...` | the same path under `/`: the units in `/usr/lib/systemd`, `/etc/skel`, `/etc/sudoers.d`, the managed settings, the installer's commands in `/usr/bin` |
-| `iso/airootfs/...` | the live stick; an installed system gets a copy of its base files (hostname, locale, mirror list), not its live-only units |
-
-A file another package owns (`/etc/pacman.conf`, `/usr/lib/os-release`, `/etc/environment`) is
-changed by a numbered migrate step that an alpm hook runs after every install or upgrade of any
-package; a file in the person's home is changed by a numbered homefix step that agentd runs at start,
-and only adds what is missing (the one file it rewrites is an old `hyprland.lua`, after keeping a
-copy of it). The package turns on its units once, from two lists. `docs/INSTALLED-OS.md`, "Packages
-and updates", has the rules for adding a file, the config split, the repositories, versions and what
-an update does to running programs.
-
-## Signing in
-
-agentd never handles a password or a token: it runs the provider CLI's own login
-(`claude auth login`, `codex login`) in a terminal it holds, so the CLI stores its
-credentials exactly as it would in a terminal of yours (`signin.py`).
-
-1. Setup states, shown in the pill with chips: `choose` (first boot: Claude or Codex),
-   `checking`, `signed_out`, `offline`, `signing_in`, `resting` (below), `ready`. Prompts wait
-   until `ready` and then run; a `!command` runs anyway.
-2. The CLI runs with `BROWSER=bombadil-browser`, which hands its page to agentd over the
-   socket, tagged with the sign-in's id. The page opens in the browser panel's Chromium
-   (own profile under `~/.local/share/bombadil/browser`, no first-run pages, DevTools on
-   127.0.0.1:9222) and comes back to the CLI's localhost callback.
-3. If `$BROWSER` is not used within 2 s, the printed URL opens instead. A Claude page that
-   ends on the code page gets `code#state` typed into the CLI, read from the tab's address.
-4. DevTools and Hyprland tell it when the panel slid out or the browser was closed; the
-   pill offers the page again. Esc cancels (the pill says "Cancelling" at once, and a page
-   still opening in a slow browser is dropped, never slid in afterwards); 10 minutes without
-   an end times out (`BOMBADIL_SIGNIN_TIMEOUT`). Success is confirmed with `claude auth
-   status` or `codex login status`. A browser that cannot open the page is an error the pill
-   shows with "Open it again", not a quiet success. However it ends (done, cancelled, timed
-   out), the sign-in puts its own tab away. When that tab is the browser's only one, closing
-   it would quit Chromium and leave the panel waiting for a window that is going away, so a
-   blank tab (`about:blank`) takes its place first (`browser.close_spare_tab`); the next time
-   the panel opens it shows nothing stale, never the login page. Once the page is away the
-   pill's Show button does nothing (`signin.show()` is for a live login only).
-5. No internet (no TCP connection to the provider's sign-in host): the pill says so, offers
-   Wi-Fi, and the sign-in starts once the host answers.
-6. A turn whose CLI says the login is gone (`authentication_failed`, a 401) signs in again
-   and runs the prompt once more, with what you did meanwhile told to the model. If the
-   rerun says it too, the login is not what is wrong (a 403, an API key in the environment):
-   the CLI's own words show and there is no second sign-in. Only the provider whose turn
-   failed is signed in again, even if you switched AI meanwhile. A `/login` typed in a
-   terminal lands in the panel too, and agentd watches for it to finish.
-7. "Sign in" typed while signed in starts a new login, except for a provider whose login
-   signs the stored one out as it starts (`login_replaces`: Codex, even if the new one is
-   then called off): there it answers "already signed in".
-
-`fake_signin.py` plays a provider login on localhost for the tests and the VM smoke test
-(`BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto|manual|never|fail`).
-
-## When the AI rests
-
-Out of plan or spending, or paused by hand, the AI "rests". That is a state of the machine, not the
-error of one ask: agentd says it once, with the time the provider gave, holds every ask that needs the
-AI instead of failing it, and leaves everything else alone. In the code it is the setup state `resting`
-beside `ready` (`rest.py` holds the state file, the reading of a reset time and every line of words;
-the design is `design/poor-man-switch-brief.md`). The screen says what is true ("Claude is at its
-limit until 15:00", "Claude is paused"); the design's name for the idea appears nowhere on it.
-
-```
-             refused for a limit (item 2), or paused by hand
-             (the AI card's switch, "pause claude")
-  +-------+ ------------------------------------------------> +---------+
-  | ready |                                                   | resting |
-  +-------+ <------------------------------------------------ +---------+
-             the reset: its time plus a minute, on the wall clock
-             Resume Claude (a pause by hand), or "resume claude"
-             Raise the limit, then Try again
-             a completed sign-in (clears a limit, not a pause)
-
-  resting -> resting: the first waiting ask after the reset is refused again. The
-  provider's new time replaces the old one (5 minutes on, if it is already past).
-```
-
-1. **What is stored.** `rest.json` in the state directory (`paths.state_dir()`, not the runtime one, so
-   a weekly limit and a pause by hand survive a restart or a reboot): per provider, a limit and a hand
-   pause. agentd is the only writer, and any process may read it.
-
-   ```json
-   {"hand": {"claude": {"since": 1759300000.0}},
-    "providers": {"claude": {"why": "limit", "kind": "five_hour",
-                             "until": 1759329600.0, "since": 1759300000.0}}}
-   ```
-
-   `why` is `limit` (a plan window) or `spend` (a spending cap, or credits used up); `kind` is the
-   provider's own window (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`) or
-   null; `until` is wall-clock seconds, or null when the provider gave no time. A hand pause has no time
-   and outranks a limit, so switching it off shows what is left. A limit is written before its turn
-   ends, so a restart finds it, and a reader never sees one past its time plus a minute.
-2. **What counts as running out.** After a failed turn that is not a `!command`, agentd asks the turn's
-   provider (`Provider.limit`, `providers.py`). It answers only when both hold: a real refusal, and
-   quota evidence. Never a busy moment.
-   - Claude: the refusal is an HTTP 429 (`api_error_status`), or `terminal_reason` `api_error` under an
-     assistant `rate_limit` or `billing_error`. The evidence is this turn's `rate_limit_event` saying
-     `rejected` while paid credits are not carrying on (`isUsingOverage` false), or quota wording in
-     the CLI's text ("hit your 5-hour limit", "hit your weekly limit", "out of usage credits",
-     "monthly spend limit"; older versions said "session limit"). Newer versions also name which 429
-     it was in `api_error`, on the assistant message and on the result: `usage_limit_reached` says by
-     itself that the plan or spend cap ran out (the window and its reset can come from the assistant
-     message's `api_error_params`). `model_requires_usage_credits` and `long_context_credits_required`
-     are entitlement checks (also 429s, and their window can read `rejected`), which never rest the
-     machine. A code this version does not know is not taken on the window's word alone: the CLI's
-     words must say it. No code at all, as older versions send, and as a newer one does for a 429 that
-     is no limit (an org's policy), is judged by the rule above, so an uncoded 429 whose window reads
-     `rejected` still rests. Run against the scripted API, the CLI's lines for a used-up plan are in
-     `tests/test_limit.py` (`_real_319`); a real used-up plan has not been seen.
-   - Codex: a failed turn saying "hit your usage limit", "out of credits", "spend cap" or "quota
-     exceeded".
-   - Not a limit: an entitlement check (`api_error` `model_requires_usage_credits` or
-     `long_context_credits_required`), the throttle notice ("not your usage limit"), "high load", a
-     529, a short `api_retry`, the context window, a budget cap, Codex's retried "rate limit
-     exceeded:", and anything a `!command` prints. The `rate_limit_event` alone never rests the machine
-     (the CLI re-sends it, and a window can read `rejected` while credits pay): it says which window
-     and when, and the refusal decides.
-   - A CLI that sleeps through the window instead of ending the turn (unattended retries) shows itself
-     by a rejected event and a retry delay of five minutes or more: the turn is refused at once and the
-     CLI stopped (`Provider.waiting`).
-3. **Times.** The provider's own, never a guess: `resetsAt` of the rejected window when it is in the
-   future, else `overageResetsAt`, else the time in its sentence ("resets 3:45pm", "try again at
-   3:45 PM", "Oct 2nd, 2026 3:45 PM"; local time unless it names a zone), else none. They read "15:00"
-   for today, "Thursday 09:00" within six days ("Thu 09:00" on a chip), "1 Nov" beyond; never "tomorrow".
-4. **The refused turn.** It has no `result` and no `error` event, which are a failure's. Its log gets a
-   `rest` event, and `turn_end` carries `requeued: true` and a `line`: "Claude hit its limit partway,
-   after changing 2 files. It carries on at 15:00." when it changed something (with Undo and Details,
-   as after any turn that did), the resting line when it changed nothing. The ask goes back to the
-   front of the queue under its own turn id (`queued` again), in the same conversation: a session id is
-   adopted only from a turn that worked, so a refusal never drops it. What the user did without the
-   model since its last turn is kept to tell it again, and the rerun is told what the cut-off try had
-   changed ("[The last try stopped at a usage limit after: … Check what is done before redoing it.]").
-   The turn took a restore point as it started; when it changed nothing, `skip_restore_point` puts back
-   the undo marker that the start cleared, so the next "undo" goes past the empty point instead of
-   saying "Undone" and changing nothing. A turn stopped by hand is not put back.
-5. **The queue.** The gate that holds asks while signed out holds them here (`_runnable`: only `ready`,
-   or a `!command`); launcher words are matched before anything is queued. Every held ask is a chip in
-   the queue the pill already has, labelled with the entry's `wait` ("15:00", "Thu 09:00", "paused",
-   "limit") instead of "next"; "On it" never shows for it, and x unqueues it as ever. An app's ask
-   arrives as `[from app notes] summarise this`, and while resting a newer ask of the same app replaces
-   its older waiting one (`unqueued` with `replaced: true`, no error), so an app on a timer cannot fill
-   the queue. The kit's `Agent` reads `setup` and `rest` from `status` (`ready`, and `note`: "At 15:00"
-   under a button that asks), keeps a turn whose `turn_end` is `requeued` waiting without a `replied`,
-   and answers the app after the reset. `bombadil ask` prints the resting line on stderr and exits 75,
-   leaving its ask queued.
-6. **Coming back.** `_rest_watch` sleeps at most 60 s at a time and compares the wall clock with `until`
-   plus a minute, so a laptop that slept through the reset wakes right. Nothing asks the provider
-   whether the limit is over: the first waiting ask is the check, and with nothing waiting nothing is
-   sent. The line is "Claude is back. Running your 3 waiting asks." (tone `done`); the cut-off ask runs
-   first, then the rest in the order typed. A spending limit, or a limit with no time (rare), shows
-   "Raise the limit", which opens the page the provider's message names (else its usage page) in the
-   browser panel and buys nothing; the button then reads "Try again", which clears the limit so that
-   the first waiting ask is the check. A hand pause ends with the switch, "resume claude", "use claude"
-   or Resume Claude. `check_access` reads `rest.json` too, so stored credentials do not turn `resting`
-   back into `ready`; "sign in" while resting does not start a `codex login`, which would revoke a
-   working login (`login_replaces`); a completed sign-in clears a limit (the new login may be another
-   account, with its own), never a pause.
-7. **On the screen.** The stone takes a new face, `resting`: hollow and grey, no ring, never red, never
-   the amber mark that means "your turn". The line above the pill is agentd's own (`rest.words`, the
-   same in every voice; the shell holds none of the words). It shows when the state flips, when the
-   pill is summoned and when an ask has to wait; otherwise it fades after 12 s and the empty field
-   carries the state ("Open or find anything. Asks wait for 15:00."). It outranks the greeting. At
-   most one button sits under it (`setup_action`: `resume`, `raise`, `retry`). A click on the stone
-   while no turn runs opens the AI card (`shell/AiCard.qml`): one row per AI from the `ai` message
-   ("Claude · ready", "Claude · at its limit until 15:00", "Codex · not signed in"), each with a switch
-   that is dimmed when it cannot be flipped. Flipping Claude's off sends
-   `{"type":"ai","op":"pause","provider":"claude"}`, the same as typing "pause claude"; on is "resume
-   claude". While a turn runs, the stone is still Stop.
-   What it looks like in the headless desktop test (`tests/desktop`, which refuses a turn with a real 429
-   from the scripted API): the line, one waiting ask labelled with the time it runs, and the empty field.
-
-   ![The resting line, a waiting ask labelled with its time, and the empty field that says when asks run](screens/resting/at-its-limit.png)
-
-   Two asks wait in the order they were typed, and a pause by hand has its one button and says "paused".
-
-   ![Two waiting asks](screens/resting/two-asks-waiting.png)
-   ![Paused by hand, with its Resume button](screens/resting/paused-by-hand.png)
-8. **What keeps working.** Nothing that is not a model ask looks at the state: launcher words (apps,
-   browser, terminal, files, undo, history, Details, Stop, the picture words, "pause" and "resume"),
-   `!commands`, apps and their processes, background jobs, and the browser panel with its own profile
-   (pages still need the network). Anything else waits as a chip.
-9. **The finder: a kept ask is never a dead end.** A sentence typed in the pill while the AI rests
-   waits as a chip, and agentd also looks, on this computer only, for what the sentence nearly names
-   (`finder.py`: pure, no model, no network, nothing opened or run). It offers up to three things as
-   chips under a line that says when the ask runs:
-
-   | What | Found by | A press |
-   |---|---|---|
-   | An app | its title, and the description its builder wrote | opens it, as its typed word does |
-   | A panel, a widget, or a command that only shows something (history, desk, brain, Wi-Fi, sound, brightness, battery) | the names the launcher knows it by | opens it, as its typed word does |
-   | A past ask of the user's, "You asked: file the March invoice (3 Sep)" | its words and the closing line it was given | shows that turn's steps (Details) |
-
-   Never offered: a command that changes something (undo, hide, restart, sign in), an app's own ask
-   (`[from app notes] ...`), a `!command`, and anything with no match above a floor. Matching is by words: a
-   word of the sentence matches a word of a thing when they are the same, one starts the other, or they
-   are one slip of the fingers apart (words of five letters or more); a thing's score is how much of the
-   sentence it covers, its title counting double; words that carry no meaning in a request ("the", "my",
-   "app", "open", ...) are left out, and a sentence with none left finds nothing.
-
-   The wire: after the `queued` event of such an ask agentd broadcasts one
-   `{"type": "found", "turn", "prompt", "line", "matches": [{"id", "kind", "label", "hint"}]}`. The line is
-   agentd's own ("Kept for 15:00. Found on this computer:", "Kept until you resume Claude. ...", or "... Nothing
-   on this computer matches." with no matches). A press is `{"type": "found_open", "turn", "id"}`: agentd
-   resolves it from what it offered (never from what the client says), opens the thing, answers with the
-   usual `local` events and lets go of the kept ask (`unqueued`). A past ask's log must be one of agentd's
-   own under the state directory. When a press cannot open its thing the ask stays kept and the same
-   `found` is sent again, so the chips come back. The first ask that hit the limit is not looked for: its
-   line is the news.
-
-   In the shell (`FoundChips.qml`, `PillState.found`) the chips are there while that line is: it fades
-   after 12 seconds like the resting line, and they go with it, when the ask is dropped or starts, when the
-   AI is back, and when a newer ask is kept. A line with Undo on it (a turn the limit cut off) is not wiped
-   by it. A press hands the keyboard over to the window it opens.
-
-   In the headless desktop test (the same scripted refusal, the real bar): a sentence that names an app
-   and a past ask, a sentence that names nothing, and a pause by hand that finds a past ask.
-
-   ![An app and a past ask found for a kept sentence](screens/resting/found-an-app-and-a-past-ask.png)
-   ![Nothing on this computer matches](screens/resting/found-nothing.png)
-   ![Paused by hand: the kept ask, what was found, and the Resume button](screens/resting/found-while-paused.png)
-10. **What is deliberately not done.** No test calls and no retry loops: one refusal is enough, and
-   nothing more is sent until the reset, a press or a word. No ring or counter on the stone. Not a
-   "needs you": no amber mark, no red line, no card on the desk, since nothing is the user's to do
-   (Raise the limit is a button on the line, not a knock). No automatic move to the other AI and none
-   to paid credits: "use codex" is the user's own word, and Raise the limit only opens the provider's
-   page. The rest is kept per provider, so Claude resting leaves Codex alone. No small local model: the
-   finder is words and nothing else. Not built yet, and in the design: a warning before the wall,
-   borrowing the other AI until the reset, and offline and outages in the same shape.
-
-## Generated apps
-
-`create_app` writes `main.qml`, optional `app.py` (a `Backend(QObject)` exposed as
-`backend`), `app.toml` and a `.desktop` entry, checks the app offscreen (errors with
-`file:line` plus a screenshot go back to the agent), then starts `bombadil-app run <name>`.
-The runtime owns the window and reloads the QML into it on every write, so the agent
-iterates by calling `create_app` again and the app keeps its place, size and saved state.
-Each app lives in its own Hyprland special workspace and gets a chip in the bar.
-
-`import Bombadil` is the app kit (`share/qml/Bombadil`, native types in
-`src/bombadil/appkit/native`), and the `bombadil-apps` skill in `share/skills` tells the
-agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
-`~/.agents/skills`) and through the `app_guide` tool.
-
-## Coding sessions
-
-The vendors' own Claude Code and Codex run unchanged in a zellij session (no bars, no keys of its
-own) inside a systemd user scope per session; a foot window is only a viewer, so closing it never
-costs work and typing the session's name brings it back. Managed hooks report each tool's state
-through `bombadil-signal` to agentd, which broadcasts one `dev` message that the bar turns into a
-dot per session and the desk into its Needs you card. See [`dev-sessions.md`](dev-sessions.md).
-
-## Why lines and pictures
-
-Nothing here asks the model again. `narrate.py` keeps the sentence the agent wrote before each
-step (`because`) and what the turn read from outside (`after`); the status line shows both on
-hover. A bare "why" during a turn is answered from that record.
-
-`show_card` (the agent) and `system_map` (the machine itself) hand `agentd` a `diagram` card
-over its socket (`cards.py` checks and lays it out, `sysmap.py` captures the network, boot, one
-service, disks, sound or screens from the real machine in parallel, under half a second; the boot
-record and the check that the provider answers get longer, since both are slow by nature). `agentd`
-broadcasts it, `shell/CardHost.qml` draws it above the status line with the kit's `Diagram`, and the
-agent gets the same picture back in words. A card still being written streams in a box at a time;
-a turn that changed a part of the machine it touched ends with a before/after receipt. A click on a
-box that names a file, service, package, page or turn comes back as `{"type":"open"}`; a service,
-package, folder or text file opens in the details drawer with `bombadil view` (`pager.py`: Esc
-closes it, the arrows and wheel scroll), and the line says "Showing" only once the drawer's window
-was there. A picture that cannot be drawn takes the last one away. (How each picture reads the
-machine, and what a real VM taught us, is in [pictures.md](pictures.md).)
-The card host is loaded through a `Loader`, so a picture that will not draw costs the pictures, never
-the bar. (The kit reaches the shell through `bin/bombadil-shell`'s import path: Quickshell cannot
-import from outside its own folder any other way.)
-
-## Mail
-
-Mail is its own view, not a website: one Mail window (`share/apps/mail`, a kit app) for every account,
-fed by Thunderbird running unseen as the engine: Gmail and Microsoft let a person allow Thunderbird on
-their own, where a new app would wait for a review or an admin. `bombadil-mail` (a user unit) is the
-middle: it owns the window's socket and the drafts, supervises Thunderbird on the `special:mail-engine`
-workspace that nobody opens (a window rule in `share/hypr/bombadil.lua`), and talks to a small add-on inside
-Thunderbird through `bombadil-mail-host`. The agent reads, searches, marks and drafts through five tools
-and cannot send: a draft goes only on the person's press on Send, which agentd checks and logs. Whatever
-agentd's `notice` messages say (new mail, a draft that is ready, a receipt) the bar shows as a line
-above the pill when no turn line has it (`shell/NoticeChips.qml`). `docs/MAIL.md` is the contract:
-processes (with diagrams), wire protocol, the press, the tools and what the ISO adds;
-`docs/design/mail-view.md` is the design: the line, the rules and what the person sees.
-
-## Messages and connections
-
-Slack and the work tools (Notion, Linear, Jira, Todoist, ClickUp) reach Bombadil through `bombadil-connect`, a
-system service that runs as its own user and keeps their tokens where the agent's processes cannot read them
-(a rule with a check today, since the image still gives the user passwordless `sudo`; `docs/CONNECT.md` says
-what that means). Slack is a small private app the person makes in their own workspace from a manifest
-Bombadil prepares, read over Socket Mode; each work tool is an official MCP server the person allows with a
-browser sign-in. `bombadil-browserd` (a user unit) holds one connection to the browser panel's Chromium so
-that the setup can point at a button and read a token off the page into the service without the model seeing
-it. agentd turns what the service says into notices and into three card kinds the bar draws (a message with a
-reply box, a task with its fields, a list), keeps the drafts (`proposals.py`) and runs the press: the agent has
-five tools and none sends, and a reply or a ticket goes only on the person's press on the button of its card,
-which agentd and the service both check against a fingerprint of exactly what the card drew. The bar's own
-`NotificationServer` replaces mako, so a web page's notification becomes the same line with Reply and Open.
-`docs/CONNECT.md` is the contract (processes with diagrams, the wire protocol, the drivers, the press, the
-cards); `docs/design/messages-and-connections.md` is the design.
+## The parts
 
 ```mermaid
 flowchart LR
-  subgraph services["Slack, Notion, Linear, Jira, Todoist, ClickUp"]
-  end
-  subgraph connect["bombadil-connect (own user, token store)"]
-    drivers["drivers: Slack, MCP"]
-    perform["perform: the only way anything leaves"]
-  end
-  browserd["bombadil-browserd (read half, no hands)"]
-  agentd["agentd: notices, cards, proposals, the press"]
-  bar["the bar: cards, NotificationServer"]
-  agent["the agent: 5 tools, none sends"]
-  services <--> drivers
-  drivers --> perform
-  browserd -. "a token off a page" .-> connect
-  connect -- "messages, tasks" --> agentd
-  agentd -- "notices, cards" --> bar
-  bar -- "edit, shown, press (the person's)" --> agentd
-  agentd -- "perform + fingerprint" --> perform
-  agent -- "read, propose" --> agentd
+    person(["the person"]) --> shell["shell: pill, line, cards, desk with the Tips card, session dots"]
+    shell <-->|"JSON lines on a Unix socket, the dev message, the welcome line and the tips message among them"| agentd["agentd: one turn at a time"]
+    agentd -->|"before each turn, when snapper is set up"| snap["snapper on the installed disk: a restore point"]
+    agentd -->|"runs, full access"| cli["provider CLI: claude or codex"]
+    cli <-->|"MCP over stdio"| mcp["bombadil-os-mcp: the OS as tools"]
+    mcp --> hypr["Hyprland: panels and windows"]
+    mcp --> apps["kit apps in ~/Apps"]
+    mcp -.->|"cards, jobs, desk, mail, connections"| agentd
+    agentd -.->|"turn notes"| brain["brain: the index of what happened"]
+    agentd -.->|"mail tools, notices"| mail["mail service: Thunderbird, unseen"]
+    agentd <-->|"messages and tasks in, the person's press out"| connect["connection service: Slack, work tools, the keys"]
+    agentd -->|"keeps the registry, starts each session"| dev["coding sessions: dev.py"]
+    dev -->|"zellij, in its own systemd scope"| tools["claude, codex or a shell"]
+    tools -.->|"hooks run bombadil-signal: dev-signal"| agentd
 ```
 
-## Next
+| Piece | What it is | Status | Page |
+|---|---|---|---|
+| agentd | The session daemon: one socket, one turn at a time, the queue, Stop, the turn log | Shipped | [agentd](architecture/agentd.md) |
+| os-mcp | The MCP server both CLIs load: the OS as typed tools | Shipped | [os-mcp](architecture/os-mcp.md) |
+| shell | The Quickshell bar: the pill, the line above it (agentd's welcome shows there), the name card, the stone, the chips (queued asks, setup choices, found things, notices, running apps, coding sessions), the cards of messages and tasks, the Widgets card, the notification server, the wallpaper | Partly shipped | [shell](architecture/shell.md) |
+| desk | Cards in two rails and strips beside the pill: Now (the route of a turn), Watching (jobs), Needs you (the coding sessions), Machine (the machine's readings), Away (the turn log and the sessions, shown when asked) and Tips (what to ask, still, in a new person's first week); a card can be dragged to a rail or into the row, and a strip to a rail. A widget shows only while it has something to say unless the person keeps it: each is set to Keep, When needed or Off on the Widgets card, and a kept Machine or Tips stays on the desk at rest | Partly shipped | [desk](architecture/desk.md) |
+| app kit | `import Bombadil`: native apps the agent writes, with a runtime, a checker and a skill | Partly shipped | [app kit](architecture/app-kit.md) |
+| browser and sign-in | Chromium as a slide-in panel, and provider sign-in that happens in the pill | Partly shipped | [browser and sign-in](architecture/browser-and-signin.md) |
+| cards and pictures | Validated diagrams the agent and the machine draw above the pill, and the reasons behind each step | Partly shipped | [cards and pictures](architecture/cards-and-pictures.md) |
+| restore points | A btrfs snapshot before each turn on an installed system, and "undo" | Partly shipped | [restore points](architecture/restore-points.md) |
+| ISO and install | The archiso image, which installs the `bombadil` package, the installer, the boot and the console | Shipped | [ISO and install](architecture/iso-and-install.md) |
+| session services | The units that put the daemon and the bar back when they die and run the brain, Mail, the browser service and the connection service, and the key that restarts the bar | Partly shipped | [session services](architecture/session-services.md) |
+| brain | An index that writes itself from what the machine saw, and the Focus window | Partly shipped | [brain](architecture/brain.md), contract [BRAIN.md](BRAIN.md) |
+| coding sessions | Named sessions of the vendors' coding tools, or a shell, that outlive their window and come back when the name is typed, with a dot each in a row above the pill's left end. A second Claude or Codex session on a git repository gets its own `git worktree`. The rest of the fence (no `sudo`, ports and limits), undo per session, handing words across (`tell`, `give`, `review`) and shipping are designed | Partly shipped | [coding sessions](architecture/coding-sessions.md) |
+| voice | A name for the person, three voices, and one true line when they arrive or leave, built from local templates with no model; the words of empty places are in the table and only `bombadil history` reads them | Partly shipped | [voice](architecture/voice.md) |
+| tips | What a person can ask, one line at a time and only what this machine can back: twenty one-line tips, what the person has tried kept by agentd, which sends a `tips` message; the Tips card on the desk shows one in a new person's first week, and the Tips app plays each tip on a small copy of the screen | Shipped | [tips](architecture/tips.md), contracts [TIPS.md](TIPS.md) and [TIP-SCENES.md](TIP-SCENES.md) |
+| self-improvement loop | Noticing repeated asks and checking itself | In progress | [loop](architecture/loop.md) |
+| mail | Mail in Bombadil's own view, with Thunderbird as the unseen engine | Partly shipped | [mail](architecture/mail.md), contract [MAIL.md](MAIL.md) |
+| connect | Slack and the work tools (Notion, Linear, Jira, Todoist, ClickUp): a service with a user of its own that keeps their keys and reads their messages and tasks, one line and one card for what is for the person, a reply or a ticket that waits for the person's press, the browser service that reads a page for the setup, and the bar's own notification server | Shipped | [connect](architecture/connect.md), contract [CONNECT.md](CONNECT.md) |
+| poor man switch | What the machine does when the AI's plan runs out | Partly shipped | [poor man switch](architecture/poor-man-switch.md) |
+| installed OS | Bombadil installed on a disk, encrypted or plain: a guided, a planned and a whole-disk install, a refresh from a newer image that keeps the home folder, the GRUB screen, `bombadil remote` and `bombadil snapshot`, and Bombadil as one pacman package that an installed machine updates with `pacman -Syu`. The install card, updates as a turn and the rest are designed | Partly shipped | [installed OS](architecture/installed-os.md) |
+| idle cost | What the desktop costs when nothing is happening: the bar's timers and animations run only while something needs them, apart from the pill's clock, and a frame count and a CPU limit in the headless desktop test, and a CPU limit in the VM smoke, fail when a loop comes back | Shipped | [idle cost](architecture/idle-cost.md), contract [IDLE-COST.md](IDLE-COST.md) |
 
-- Boot the ISO in QEMU and fix what the real Hyprland session shows (bar layering,
-  app window rules, greetd autologin).
-- Browser control: a Playwright/CDP MCP against Chromium's port 9222, so the agent can
-  read and act in pages the user is watching.
-- Voice input and a screen-aware mode (periodic screenshots into context).
-- Custom compositor once the interaction model is settled.
+Coding sessions run beside the turn, not through it: agentd starts the vendor's tool in a zellij session of its own, the tool's hooks tell agentd what it is doing (`bombadil-signal`), and the shell draws the dots from the `dev` message ([coding sessions](architecture/coding-sessions.md)).
+
+The voice runs beside the turn too: the bar says hello to agentd (`bar`), and agentd answers with the name card the first time and with one welcome line after that, dropped and never queued while a turn runs; a shutdown's start text says goodbye ([the voice](architecture/voice.md)).
+
+Messages and connections run beside the turn as well: `bombadil-connect`, a system service with a user of its own, holds the keys to Slack and the work tools and reads their messages and tasks, and agentd turns what it says into notices and into `message`, `task` and `list` cards. The agent has five tools that read and draft and none that sends: a reply, a ticket or a comment leaves only on the person's press on the button of its card, which agentd and the service both check. `bombadil-browserd`, a user unit, opens a page in the browser panel, points at a button and takes a key off it into the service when a service is being connected, so the model never sees the key. The bar's own notification server replaces a notification daemon ([messages and connections](architecture/connect.md), contract [CONNECT.md](CONNECT.md)).
+
+Tips runs beside the turn too: agentd keeps the table of twenty tips and what the person has tried, counts a tip from what it sees itself with no model, and tells the shell in a `tips` message which tip to show. The Tips card on the desk draws it for a new person's first week or while the person keeps it, and the Tips app, which the word `tips` opens, plays each tip on a small copy of the screen. A press on a tip's button puts its words in the pill and sends nothing: the person's own Enter does that ([Tips](architecture/tips.md), contracts [TIPS.md](TIPS.md) and [TIP-SCENES.md](TIP-SCENES.md)).
+
+The installed system is one layout that `bombadil-install` writes once: a GPT disk with a 1 GiB EFI partition mounted at `/efi` and one btrfs partition, inside LUKS2 when the person gives a password, holding `@` (the root, with the kernel in its `/boot`), `@home`, `@snapshots`, `@log` and `@pkg`. An undo swaps a restore point in under the name `@`, so it takes the kernel back with the system, and a refresh puts a newer image under the home folder that is already there ([installed OS](architecture/installed-os.md)).
+
+Bombadil's own files are one pacman package, `bombadil`, that `scripts/build-package.sh` builds from `packaging/bombadil` and the top-level `bin/`, `src/`, `shell/` and `share/`. The image installs it and carries the repository it was built from, and an installed machine takes a newer build with `pacman -Syu`, so a new Bombadil needs no new image. The tree sits at `/usr/share/bombadil` with a link for each command in `/usr/bin`. A file another package owns (`/etc/pacman.conf`, `/usr/lib/os-release`, `/etc/environment`) changes by a numbered migrate step that a pacman hook runs, and a file in the person's home changes by a numbered homefix step that agentd runs when it starts. The person's `~/.config/hypr/hyprland.lua` is a few lines that load Bombadil's part, `share/hypr/bombadil.lua`, from the package and then the person's own lines, so a fix to Bombadil's part reaches a machine installed long ago ([installed OS, Packages and updates](architecture/installed-os.md#packages-and-updates)).
+
+At rest the desktop is held to a small share of one core: the timers and animations of the bar run only while something needs them (the pill's clock, which changes once a minute, always runs), and a frame count and a CPU limit in the headless desktop test, and a CPU limit in the VM smoke, fail when a loop that kept it busy comes back ([idle cost](architecture/idle-cost.md), contract [IDLE-COST.md](IDLE-COST.md)).
+
+[The roadmap](roadmap.md) says where each piece stands and what is left. [The glossary](glossary.md) explains the project's own words.
+
+## One turn
+
+```mermaid
+sequenceDiagram
+    participant P as the person
+    participant S as shell
+    participant A as agentd
+    participant R as snapper
+    participant C as provider CLI
+    participant M as os-mcp
+    P->>S: types a line and presses Enter
+    S->>A: prompt
+    A-->>S: turn started (before the restore point is saved)
+    opt snapper is set up
+        A->>R: create a restore point
+    end
+    A->>C: run one turn, os-mcp attached
+    C->>M: tool calls
+    M-->>C: results
+    C-->>A: a stream of JSON events
+    A-->>S: text, tool and result events for every client
+    A->>A: append the turn to turns.jsonl
+    S-->>P: the answer and, when the turn changed something, Undo and sometimes a receipt
+```
+
+1. The shell (or `bombadil ask`) writes a `prompt` to the agentd socket. Words that need no model (`undo`, `history`, `open ...`, the picture words, `pause claude`, a coding session's name such as `claude acme` or `end reviewer`, and the like) are matched first by the launcher and answered by agentd itself, so they never reach the provider. `stop` is a message of its own and works while a turn runs. A line that starts with `!` is a turn whose "provider" is the shell: it runs the command and shows what it printed.
+2. agentd runs one turn at a time and queues the rest, and it holds asks that need the AI while the AI cannot be asked (not signed in, offline or resting). Before the provider starts it asks snapper for a restore point when snapper is set up (an installed system, not the live image, and not with `snapshots = false`); a snapper that exits with an error costs the turn its restore point and nothing else. An installed system keeps about the newest 30 restore points, and an undo applies at the next boot ([restore points](architecture/restore-points.md)).
+3. For the turn it starts the provider's CLI as a fresh process, in full-access mode, with `bombadil-os-mcp` in its tool configuration and Bombadil's system prompt appended (it carries the person's name and voice once they have chosen), and resumes the saved conversation (`session_id`), so the machine has one conversation. Claude is asked for Sonnet unless the config names a model or the session said `use opus` (a launcher word, answered without a turn), and the conversation and that choice survive a restart of `agentd`, not a reboot ([models](architecture/agentd.md#models)).
+4. The CLI's stream becomes events, broadcast to every connected client. The shell turns them into the line above the pill, the stone's face, cards and the desk. The OS tools act on Hyprland, on apps, on restore points and on mail, and ask agentd for what it owns (cards, jobs, the desk, the mail view, and what the connection service holds: five tools that read messages and tasks and draft a reply or a ticket, none of which sends).
+5. The turn is appended to `~/.local/state/bombadil/turns.jsonl` and the brain is told, never waited for.
+
+The details, exact message names and the edge cases (a stopped turn, a missing provider, a sign-in that expires mid-turn) are in [agentd](architecture/agentd.md), and how each step reaches the screen is in [the UX flows](ux/flows.md).
+
+## Where the code lives
+
+| Path | What is there |
+|---|---|
+| `bin/` | The commands: `agentd`, `bombadil`, `bombadil-os-mcp`, `bombadil-app`, `bombadil-browser`, `bombadil-shell`, `bombadil-signal` (what a coding tool's hooks run, so the dots know its state), the brain's two services (`bombadil-brain`, `bombadil-brain-watch`), Mail's service (`bombadil-mail`) and the native-messaging host that Thunderbird starts for it (`bombadil-mail-host`), the connection service (`bombadil-connect`) and the browser service (`bombadil-browserd`) |
+| `src/bombadil/` | The Python behind them, among it `dev.py` (the coding sessions), `away.py` (the Away card), `voice.py`, `greet.py` and `persona.py` (the voice), `tips.py` (Tips) and `tip_scene.py` (the vocabulary of a tip's scene, which only the tests import), `installplan.py` (the install plan, and the list of disks to install on), `remote.py` (`bombadil remote`), `connect/` (the connection service and its drivers), `browserd/` (the browser service), `proposals.py` (what waits for the person's press) and `notifications.py` (what agentd makes of a notification the bar hands it). Standard library only, apart from the app kit's `PySide6` and `cryptography` and the connection service's `mcp` and `httpx` |
+| `shell/` | The Quickshell bar in QML, among it the coding sessions' dots (`DevState.qml`, `SessionChips.qml`, `SessionPeek.qml`), the name card (`PersonaCard.qml`), the Widgets card (`WidgetsCard.qml`), the Tips card (`TipsCard.qml`), the pill's keys (`PillKeys.qml`, which answer a tap of Super and Alt+Space), the faces of the cards of messages, tasks and lists (`MessageFace.qml`, `TaskFace.qml`, `ListFace.qml`) and the notification server (`Notifications.qml`) |
+| `share/qml/Bombadil/` | The app kit and the design tokens (`Theme.qml`, with the one switch for reduced motion) the shell and every app read, and two components only the system uses: `Stone.qml` (the mark the pill and the tip scenes draw) and `TipScene.qml` (what plays a tip) |
+| `share/skills/bombadil-apps/`, `share/app-template/`, `share/apps/` | The skill that teaches the CLIs to build apps, the template they start from and the built-in apps (the Brain, Mail and Tips windows) |
+| `share/skills/bombadil-mail/`, `share/mail/` | The skill for the mail tools and the Thunderbird add-on that Mail's engine loads |
+| `share/wallpaper/`, `share/grub/` | The wallpaper picture the bar draws, and the picture of the screen GRUB asks for the disk's password on, which the installer puts on the EFI partition (the `theme.txt` beside it is not used) |
+| `share/voice/`, `share/tips/` | The words Bombadil says when the person arrives or leaves (`lines.toml`) and the table of tips (`tips.toml`) |
+| `share/connect/`, `share/skills/bombadil-connect/` | The recipes for the five work tools and the client's metadata, and the skill for the five connection tools |
+| `share/zellij/` | zellij's settings for the coding sessions' invisible terminal (`config.kdl`: no keys of its own, no frames, no tips; `dev.py` closes zellij's tab and status bars when it starts a session) |
+| `packaging/bombadil/` | Bombadil as a pacman package: `PKGBUILD`, the install scriptlet and `root/`, a mirror of `/` for every file the package puts outside `/usr/share/bombadil`: the installer and the rollback it pairs with (`bombadil-install`, `bombadil-rollback`), `bombadil-setup`, GRUB's screen (`bombadil-grub-config`, `etc/grub.d/000_bombadil_screen`), the units (the connection service's system unit and its user among them), greetd's drop-in, passwordless `sudo`, the managed settings that make Claude Code and Codex run `bombadil-signal`, `/etc/skel` with the stub of the Hyprland config, and the pacman hook and migrate steps. `scripts/build-package.sh` builds it |
+| `iso/` | The archiso profile of the live stick: the package list (`zellij` among them, and `bombadil` itself), the live-only units (`bombadil-live`, `pacman-init`), the base files the installer copies (hostname, locale, mirror list), the boot menu |
+| `install/` | What the installer carries from the stick's home folder to the installed disk (`carry.list`, one path a line), read by `bombadil-install` and `src/bombadil/installplan.py`; the package installs it at `/usr/share/bombadil/install` |
+| `scripts/` | Building the package (`build-package.sh`) and the ISO, running it in a VM and testing it there (`test-vm.sh`, with its modes for install, refresh and update), a development session, the VM tools |
+| `tests/` | The unit tests, the QML tests, the headless desktop test (`tests/desktop/`), the btrfs kernel VM harness (`tests/vm/`), the mail lab (`tests/mail/`) and the fakes of the connection and browser services (`tests/connect_fakes/`, `tests/browserd_fakes/`). The ISO smoke is `bombadil-smoke` in `packaging/bombadil/root/usr/bin`, run by `scripts/test-vm.sh` |
+| `docs/` | Everything you are reading, with [an index](README.md) |
+
+The full map with the conventions the code shows is in [the development guide](contributing/development.md), and every name the system exposes (commands, environment variables, files, units, ports) is in [the reference](reference.md).
+
+## The foundation
+
+These choices were made on 2026-09-27 and are the ground the pieces stand on. The reasons are in [the foundation brief](design/foundation-choices.md) and the full list of decisions is [the decision log](decisions/README.md).
+
+| Choice | Pick | Why |
+|---|---|---|
+| Base | Arch with btrfs and snapper | Agents know it; a rolling graphics stack; archiso; snapshots are the undo |
+| Display | Hyprland first, a custom compositor later (an idea, no code) | Slide-in special workspaces and IPC out of the box; a browser needs a real Wayland server |
+| First target | A VM, with an ISO meant to boot hardware too (no boot on hardware is recorded) | A fast loop while the core changes daily |
+| Agent runtime | The official Claude Code and Codex CLIs, wrapped by `agentd` | The person's own Claude or ChatGPT login is used; the vendors' tool use is not rebuilt |
+| Generated apps | QML through PySide6, in `~/Apps/<name>/` | No build step, hot reload, real windows, no ports |
+| Provider switching | One MCP server, `bombadil-os-mcp` | The same OS abilities whichever provider runs |
+| Browser | Chromium with remote debugging on | The panel is a real browser the person can watch |
+
+## What every piece keeps
+
+[The principles](principles.md) are the rules the design keeps, and each piece page says which ones it leans on. Four decide most questions:
+
+- **The person is a passenger.** The machine does the work and shows what it did, in plain words and pictures ([the principle](principles.md#the-person-is-a-passenger)).
+- **Full access, with undo instead of guard rails.** Nothing asks permission for what a restore point can reverse ([the principle](principles.md#full-access-with-undo)).
+- **Something true is on screen within 200 ms.** Nothing waits on a model for what the machine already knows ([the principle](principles.md#something-true-in-200-ms)).
+- **Every piece degrades.** A missing part costs its own feature, never the bar ([the principle](principles.md#degrade-and-recover)).
+
+Before you change a piece, read its page and run [the checklist](principles.md#checking-a-change-against-the-principles). What a change must also update is in [documenting your piece](contributing/documenting.md).

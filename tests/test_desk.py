@@ -1,6 +1,9 @@
+import ast
 import random
+import re
 import threading
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -15,8 +18,8 @@ def test_a_new_desk_is_the_one_the_shell_expects(home):
     assert desk.Desk().snapshot() == {
         "type": "desk", "folded": False, "hidden": ["alive"], "stripped": [], "kept": [], "screen": "",
         "rails": {"now": "left", "watching": "left", "needs": "right", "machine": "right", "away": "right",
-                  "alive": "left"},
-        "order": {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]},
+                  "alive": "left", "tips": "right"},
+        "order": {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine", "tips"]},
         # The rows of the Widgets card: the shipped desk keeps nothing, and says what each can be.
         "widgets": [
             {"id": "now", "title": "Now", "question": "What is it doing, and why?", "can": ["needed", "off"]},
@@ -25,6 +28,8 @@ def test_a_new_desk_is_the_one_the_shell_expects(home):
             {"id": "needs", "title": "Needs you", "question": "What is waiting for me?", "can": ["needed"]},
             {"id": "away", "title": "Away", "question": "What happened while I was gone?", "can": ["needed", "off"]},
             {"id": "machine", "title": "Machine", "question": "Is the machine in trouble?",
+             "can": ["keep", "needed", "off"]},
+            {"id": "tips", "title": "Tips", "question": "What can I ask it to do?",
              "can": ["keep", "needed", "off"]}]}
 
 
@@ -50,7 +55,7 @@ def test_a_new_desk_is_the_one_the_shell_expects(home):
     ([("unfold", "machine")], True, "Machine is already unfolded."),
     ([("fold", "machine"), ("unfold", "machine")], True, "Unfolded Machine."),
     ([("fold", "sofa")], False, ("There is no widget called 'sofa'. The widgets are Now, Watching, Alive, "
-                                 "Needs you, Away and Machine.")),
+                                 "Needs you, Away, Machine and Tips.")),
     ([("fold", "machine"), ("show", "machine")], True, "Here is the machine."),
     ([("fold", "watching"), ("show", "watching")], True, "Unfolded Watching."),
     ([("fold", "alive"), ("show", "alive")], True, "Put Alive on the desk."),
@@ -59,8 +64,8 @@ def test_a_new_desk_is_the_one_the_shell_expects(home):
     ([("fold", "watching"), ("move", "watching", "right", 0)], True, "Moved Watching to the right rail."),
     ([("fold", "now"), ("move", "now", None, 2)], True, "Moved Now further from the pill."),
     ([("hide", "sofa")], False, ("There is no widget called 'sofa'. The widgets are Now, Watching, Alive, "
-                                 "Needs you, Away and Machine.")),
-    ([("hide", None)], False, "Which widget? The widgets are Now, Watching, Alive, Needs you, Away and Machine."),
+                                 "Needs you, Away, Machine and Tips.")),
+    ([("hide", None)], False, "Which widget? The widgets are Now, Watching, Alive, Needs you, Away, Machine and Tips."),
     ([("make", "batch")], False, "The desk cannot make."),
     ([("move", "watching", "right", 0)], True, "Moved Watching to the right rail."),
     ([("move", "watching", "right")], True, "Moved Watching to the right rail."),
@@ -83,10 +88,10 @@ def test_what_each_op_does_and_says(home, ops, ok, text):
 def test_a_move_puts_the_widget_where_it_was_asked(home):
     d = fresh(home)
     d.apply("move", "watching", "right", 0)
-    assert d.snapshot()["order"] == {"left": ["now", "alive"], "right": ["watching", "needs", "away", "machine"]}
+    assert d.snapshot()["order"] == {"left": ["now", "alive"], "right": ["watching", "needs", "away", "machine", "tips"]}
     assert d.snapshot()["rails"]["watching"] == "right"
     d.apply("move", "now", "right")        # no place: last, so it never takes the slot by the pill
-    assert d.snapshot()["order"]["right"] == ["watching", "needs", "away", "machine", "now"]
+    assert d.snapshot()["order"]["right"] == ["watching", "needs", "away", "machine", "tips", "now"]
     d.apply("move", "now", "right", 99)    # past the end is the end; below zero is the pill
     assert d.snapshot()["order"]["right"][-1] == "now"
     d.apply("move", "machine", "right", -3)
@@ -163,10 +168,10 @@ def test_needs_can_never_be_hidden_even_by_a_hand_edited_file(home):
 def test_state_is_said_in_words_and_changes_nothing(home):
     d = fresh(home)
     assert d.apply("state") == (True, ("The desk is open. Left rail, nearest the pill first: Now, Watching, "
-                                       "Alive (put away). Right rail: Needs you, Away, Machine."))
+                                       "Alive (put away). Right rail: Needs you, Away, Machine, Tips."))
     assert not paths.desk_file().exists()
     d.apply("fold", "machine")
-    assert d.apply("state")[1].endswith("Right rail: Needs you, Away, Machine (folded to a strip).")
+    assert d.apply("state")[1].endswith("Right rail: Needs you, Away, Machine (folded to a strip), Tips.")
     d.apply("unfold", "machine")
     d.apply("fold")
     assert d.apply("state")[1].startswith("The desk is folded to strips.")
@@ -183,7 +188,7 @@ def test_a_change_survives_a_restart(home):
     assert again.snapshot() == d.snapshot()
     assert again.snapshot()["folded"] is True and again.snapshot()["hidden"] == ["machine"]
     assert again.snapshot()["stripped"] == ["needs"]
-    assert again.snapshot()["order"]["right"] == ["needs", "watching", "away", "machine"]
+    assert again.snapshot()["order"]["right"] == ["needs", "watching", "away", "machine", "tips"]
 
 
 def test_the_file_is_small_toml_anyone_can_read(home):
@@ -219,7 +224,8 @@ def test_a_corrupt_or_odd_file_gives_a_working_default_desk(home, content):
     paths.desk_file().parent.mkdir(parents=True)
     paths.desk_file().write_text(content)
     d = desk.Desk().load()
-    assert d.snapshot()["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
+    assert d.snapshot()["order"] == {"left": ["now", "watching", "alive"],
+                                     "right": ["needs", "away", "machine", "tips"]}
     assert d.snapshot()["rails"] == desk.Desk().snapshot()["rails"] and d.snapshot()["screen"] == ""
     assert d.apply("hide", "machine") == (True, "Put Machine away.")   # and the file can be saved over
     assert "machine" in desk.Desk().load().snapshot()["hidden"]
@@ -276,7 +282,7 @@ def test_a_hand_edit_moves_a_widget_and_the_rest_is_kept(home):
     # the widgets the order does not list; machine keeps its default rail (the odd value is
     # ignored) and the place the order gives it.
     assert s["rails"]["watching"] == "right" and s["rails"]["machine"] == "right"
-    assert s["order"] == {"left": ["alive", "now"], "right": ["machine", "watching", "needs", "away"]}
+    assert s["order"] == {"left": ["alive", "now"], "right": ["machine", "watching", "needs", "away", "tips"]}
 
 
 def test_a_disk_that_will_not_take_the_file_costs_nothing(home, capsys):
@@ -354,7 +360,7 @@ def test_the_launcher_threads_and_the_shell_can_change_it_at_once(home):
     seen = []
     d.on_change = lambda: seen.append(1)
     errors = []
-    widgets = ["now", "watching", "machine", "away", "alive", "needs"]
+    widgets = ["now", "watching", "machine", "away", "alive", "needs", "tips"]
 
     def work(seed):
         rng = random.Random(seed)
@@ -401,7 +407,7 @@ def test_any_run_of_ops_leaves_a_consistent_desk_that_round_trips(home):
 @pytest.mark.parametrize("word, widget", [
     ("now", "now"), ("Route", "now"), ("watching", "watching"), ("needs you", "needs"), ("Needs", "needs"),
     ("needs-you", "needs"), ("away", "away"), ("while you were away", "away"), ("machine", "machine"),
-    ("alive", "alive"), ("Needs You.", None), ("", None), (None, None), ("desk", None), ("пришло", None),
+    ("alive", "alive"), ("tips", "tips"), ("Tips", "tips"), ("tip", None), ("Needs You.", None), ("", None), (None, None), ("desk", None), ("пришло", None),
 ])
 def test_the_words_a_widget_answers_to(word, widget):
     assert desk.find(word) == widget
@@ -498,3 +504,209 @@ def test_a_desk_call_leaves_no_closing_sentence_and_no_undo():
 def test_odd_desk_arguments_never_break_the_line(args):
     from bombadil import narrate
     assert narrate.tool_step("mcp__bombadil-os__desk", args).text
+
+
+# -- Tips (docs/TIPS.md): the card at the top of the right rail, put away by its x or by "hide tips", and kept --
+
+def test_tips_is_the_top_of_the_right_rail_and_is_neither_always_nor_opt_in(home):
+    w = desk.WIDGETS["tips"]
+    assert (w.title, w.words, w.rail) == ("Tips", ("tips",), "right")
+    assert "tips" not in desk.ALWAYS and "tips" not in desk.OPT_IN and "tips" not in desk.ASKABLE
+    s = fresh(home).snapshot()
+    assert s["order"]["right"] == ["needs", "away", "machine", "tips"]        # bottom up: Tips is the farthest
+    assert "tips" not in s["hidden"] and s["rails"]["tips"] == "right"
+
+
+def test_putting_tips_away_says_how_to_see_them_again(home):
+    d = fresh(home)
+    assert d.apply("hide", "tips") == (True, "Put Tips away. Say tips to see them again.")
+    assert d.snapshot()["hidden"] == ["alive", "tips"]
+    # said once: asking again changes nothing, and the way back is no longer news
+    assert d.apply("hide", "tips") == (True, "Tips is already put away.")
+    # the way back for the desk's own tool and the Widgets card is show, which also unfolds it
+    assert d.apply("show", "tips") == (True, "Put Tips on the desk.")
+    assert "tips" not in d.snapshot()["hidden"]
+    assert d.apply("show", "Tips") == (True, "Tips is already on the desk.")
+
+
+def test_tips_is_put_away_by_the_x_the_widgets_card_and_the_word_with_one_sentence_and_one_file(home):
+    """The card's x sends {"type": "desk", "op": "set", "widget": "tips", "state": "off"}, the Widgets card's Off
+    sends the same, and the launcher's "hide tips" calls Desk.apply("hide"): one sentence, one state, one file."""
+    from bombadil import launcher
+    assert launcher.match("hide tips") == launcher.Action("widget", "tips", "hide", "Tips")
+    assert launcher.match("put tips away") == launcher.Action("widget", "tips", "hide", "Tips")
+    for apply in (("hide", "tips"), ("set", "tips", None, None, "off")):
+        d = fresh(home)
+        assert d.apply(*apply) == (True, "Put Tips away. Say tips to see them again.")
+        assert d.snapshot()["hidden"] == ["alive", "tips"]
+
+
+def test_tips_is_a_calm_widget_that_can_be_kept_and_the_widgets_card_lists_it_last(home):
+    w = desk.WIDGETS["tips"]
+    assert w.calm and w.listed and w.question == "What can I ask it to do?"
+    assert w.then == "Say tips to open the app." and w.quiet == ""
+    assert desk.can("tips") == ("keep", "needed", "off")
+    rows = fresh(home).snapshot()["widgets"]
+    assert rows[-1] == {"id": "tips", "title": "Tips", "question": "What can I ask it to do?",
+                        "can": ["keep", "needed", "off"]}
+    # every sentence a widget says is a line above the pill: one line, and none of the words the voice keeps out
+    for text in (w.question, w.then):
+        assert "\n" not in text and "!" not in text and "\u2014" not in text
+        assert not {"will", "tomorrow", "later"} & set(text.lower().replace(".", "").replace("?", "").split())
+
+
+def test_keeping_tips_says_what_it_did_and_the_two_steps_of_hide_say_the_way_back(home):
+    d = fresh(home)
+    assert d.apply("keep", "tips") == (True, "Tips stays on the desk.")
+    assert d.apply("keep", "tips") == (True, "Tips is already kept on the desk.")
+    assert d.snapshot()["kept"] == ["tips"] and d.state_of("tips") == "keep"
+    # "hide tips" is a step, the first time: no longer kept, with the way to the app; the card is the person's again
+    assert d.apply("hide", "tips") == (True, "Tips is no longer kept. Say tips to open the app.")
+    assert d.snapshot()["kept"] == [] and "tips" not in d.snapshot()["hidden"]
+    # and the second puts it away, with the way back as before
+    assert d.apply("keep", "tips") == (True, "Tips stays on the desk.")
+    assert d.apply("hide", "tips") == (True, "Tips is no longer kept. Say tips to open the app.")
+    assert d.apply("hide", "tips") == (True, "Put Tips away. Say tips to see them again.")
+    assert d.state_of("tips") == "off"
+    # keep brings it back from away, for good
+    assert d.apply("keep", "tips") == (True, "Tips stays on the desk.")
+    assert d.snapshot()["hidden"] == ["alive"] and d.snapshot()["kept"] == ["tips"]
+
+
+def test_the_widgets_cards_three_parts_for_tips_say_the_same_things(home):
+    d = fresh(home)
+    assert d.apply("set", "tips", None, None, "keep") == (True, "Tips stays on the desk.")
+    assert d.apply("set", "tips", None, None, "needed") == (True, "Tips is no longer kept. Say tips to open the app.")
+    assert d.apply("set", "tips", None, None, "needed") == (True, "Tips is already on the desk.")
+    assert d.apply("set", "tips", None, None, "off") == (True, "Put Tips away. Say tips to see them again.")
+    assert d.apply("set", "tips", None, None, "off") == (True, "Tips is already put away.")
+    assert d.apply("set", "tips", None, None, "needed") == (True, "Put Tips on the desk.")
+    # Off from kept is one press, and says the way back too
+    d.apply("set", "tips", None, None, "keep")
+    assert d.apply("set", "tips", None, None, "off") == (True, "Put Tips away. Say tips to see them again.")
+    assert d.snapshot()["kept"] == [] and d.snapshot()["hidden"] == ["alive", "tips"]
+
+
+def test_a_kept_tips_survives_a_restart_and_the_install_and_the_desk_reset_forgets_it(home):
+    d = fresh(home)
+    d.apply("keep", "tips")
+    d.apply("keep", "machine")
+    again = desk.Desk().load()
+    assert again.snapshot() == d.snapshot() and again.snapshot()["kept"] == ["machine", "tips"]
+    # the file the installer copies is plain TOML that names it
+    assert tomllib.loads(paths.desk_file().read_text())["kept"] == ["machine", "tips"]
+    assert d.apply("reset") == (True, "The desk is back as it came.")
+    assert d.snapshot()["kept"] == [] and d.snapshot()["hidden"] == ["alive"]
+    # a hand-edited file may keep Tips too, and where it also puts it away, away wins
+    paths.desk_file().write_text('kept = ["tips"]\n')
+    assert desk.Desk().load().snapshot()["kept"] == ["tips"]
+    paths.desk_file().write_text('kept = ["tips"]\nhidden = ["tips"]\n')
+    assert desk.Desk().load().snapshot()["kept"] == []
+
+
+def test_keep_tips_is_a_launcher_word_and_show_tips_and_open_tips_are_the_apps(home):
+    """The words: "keep tips" (and "... on the desk") keep it; "hide tips" is the two steps; "show tips" and "open
+    tips" open the Tips app (its own words, TIPS_COMMANDS), never the desk's, so the card comes back by "keep tips"
+    or the Widgets card and not by a word that means the app."""
+    from bombadil import launcher
+    keep = launcher.Action("widget", "tips", "keep", "Tips")
+    for words in ("keep tips", "Keep Tips", "keep the tips", "keep tips on the desk", "keep tips on my desk"):
+        assert launcher.match(words, []) == keep, words
+    # a longer sentence or a question is the agent's, as it is for every widget
+    for words in ("keep tips?", "keep tips coming", "keep tips for git", "keep tips on the left", "keep my tips"):
+        assert launcher.match(words, []) is None, words
+    for words in ("show tips", "open tips"):
+        assert launcher.match(words, []).kind == "tips", words       # the app's
+    assert launcher.match("bring up tips", []) is None
+    lx = launcher.Launcher(desk=fresh(home))
+    assert lx.run(launcher.match("keep tips", [])) == (True, "Tips stays on the desk.")
+    assert lx.run(launcher.match("keep tips on the desk", [])) == (True, "Tips is already kept on the desk.")
+    assert launcher.Launcher.doing(keep) == "Keeping Tips on the desk"
+    assert lx.run(launcher.match("hide tips", [])) == (True, "Tips is no longer kept. Say tips to open the app.")
+    assert lx.run(launcher.match("hide tips", [])) == (True, "Put Tips away. Say tips to see them again.")
+    assert {e["name"]: e["keep"] for e in launcher.entries([]) if e["kind"] == "widget"}["tips"] is True
+
+
+def test_show_tips_is_not_a_desk_word(home):
+    """"show tips" opens the Tips app (the app's own words); the desk's launcher never answers it, so a person
+    who put the card away is not told "Put Tips on the desk." by a word that means the app."""
+    from bombadil import launcher
+    for words in ("show tips", "open tips", "Show Tips"):
+        assert launcher.match(words, []).kind == "tips", words
+    assert launcher.match("bring up tips", []) is None            # the desk does not answer an open verb for Tips
+    # the other widgets keep their verbs
+    assert launcher.match("show machine") == launcher.Action("widget", "machine", "open", "Machine")
+
+
+def test_the_pill_hints_show_tips_since_the_app_answers_it_and_is_told_otherwise_when_nothing_does(home, monkeypatch):
+    from bombadil import launcher
+    widgets = {e["name"]: e for e in launcher.entries([]) if e["kind"] == "widget"}
+    assert "open" not in widgets["tips"]               # the Tips app's words answer it, so the hint is true
+    assert not [name for name, e in widgets.items() if "open" in e]
+    # were nothing to answer it, the pill must not hint "Tips" for "show tips" as it does for "show machine"
+    monkeypatch.setattr(launcher, "TIPS_COMMANDS", {})
+    widgets = {e["name"]: e for e in launcher.entries([]) if e["kind"] == "widget"}
+    assert widgets["tips"]["open"] is False
+    assert not [name for name, e in widgets.items() if name != "tips" and "open" in e]
+
+
+def test_tips_put_away_survives_a_restart_and_the_install(home):
+    d = fresh(home)
+    d.apply("hide", "tips")
+    d.apply("move", "tips", "left", 0)
+    again = desk.Desk().load()
+    assert again.snapshot() == d.snapshot()
+    assert "tips" in again.snapshot()["hidden"] and again.snapshot()["rails"]["tips"] == "left"
+    assert again.snapshot()["order"]["left"][0] == "tips"
+    # the file the installer copies is plain TOML that names the widget
+    data = tomllib.loads(paths.desk_file().read_text())
+    assert "tips" in data["hidden"] and data["rails"]["tips"] == "left" and "tips" in data["order"]["left"]
+
+
+def test_a_desk_file_from_before_tips_gets_the_card_last_in_the_right_rail(home):
+    paths.desk_file().parent.mkdir(parents=True)
+    paths.desk_file().write_text(
+        'folded = false\nhidden = ["alive"]\nstripped = []\nscreen = ""\n[rails]\nnow = "left"\n'
+        'watching = "left"\nalive = "left"\nneeds = "right"\naway = "right"\nmachine = "right"\n'
+        '[order]\nleft = ["now", "watching", "alive"]\nright = ["machine", "needs", "away"]\n')
+    s = desk.Desk().load().snapshot()
+    assert s["order"]["right"] == ["machine", "needs", "away", "tips"] and "tips" not in s["hidden"]
+
+
+@pytest.mark.parametrize("words, asked", [
+    ("put tips on the left", True), ("hide tips", True), ("move tips to the left rail", True),
+    ("bring the tips card back", True), ("show tips, please", True),
+    ("give me tips for git", False), ("any tips for sleeping", False), ("tips", False),
+    # "tips" is a plain word too: after on, to, in or at it must name a place on the desk to be the desk's
+    ("put tips on the right", True), ("move tips to the other rail", True), ("put tips on my left", True),
+    ("keep tips in mind when you write this", False), ("put tips in the README", False),
+    ("show tips on writing better commit messages", False), ("bring tips to the meeting", False),
+    ("put tips in the jar", False), ("show tips at the end of the page", False),
+    # the other widgets are not words for anything else, so their gate is as it was
+    ("put machine in the corner", True),
+])
+def test_the_agents_desk_tool_works_when_the_words_ask_for_tips_on_the_desk(words, asked):
+    assert desk.asked_for_desk(words) is asked
+
+
+def test_the_desktop_test_puts_the_desk_back_in_the_order_it_found_it(home):
+    """Section 12 of tests/desktop/driver.py drags Watching to the right rail and Machine to the left, then sends
+    moves to put them back and checks the order. It needs the image and is not run here, so its moves and the
+    order it expects are read from its source and replayed on a real Desk: a rank that lands a place too early
+    (Watching still holds a place in the right rail when Machine goes back before Tips) shows here, not after a
+    run of twenty-five minutes."""
+    source = (Path(__file__).parent / "desktop" / "driver.py").read_text()
+    after = source.split("# put the desk back as it was, for what follows", 1)[1].split("# 13. Away", 1)[0]
+    sends = re.findall(r'^send\((\{"type": "desk", "op": "move".*\})\)$', after, re.MULTILINE)
+    moves = [ast.literal_eval(m) for m in sends]
+    expected = ast.literal_eval(re.search(r'st\["order"\] == (\{.*\})\n', after).group(1))
+    assert {m["widget"] for m in moves} == {"watching", "machine"}
+    d = fresh(home)
+    start = d.snapshot()["order"]
+    d.apply("move", "watching", "right", 0)               # the drags before it
+    d.apply("fold", "machine")
+    d.apply("move", "machine", "left", 0)
+    for m in moves:
+        assert d.apply("move", m["widget"], m["rail"], m["rank"])[0]
+    assert d.snapshot()["order"] == expected == start and d.snapshot()["stripped"] == []
+

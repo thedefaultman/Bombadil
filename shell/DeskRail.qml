@@ -89,6 +89,7 @@ Item {
             Loader {
                 anchors.bottom: parent.bottom
                 sourceComponent: cell.modelData === "now" ? nowFace
+                               : cell.modelData === "tips" ? tipsFace
                                : cell.modelData === "watching" || cell.modelData === "needs"
                                  || cell.modelData === "machine" || cell.modelData === "away" ? rowsFace : null
             }
@@ -122,6 +123,21 @@ Item {
                 NowCard {
                     model: rail.desk.nowModel
                     onTitleClicked: rail.desk.openDetails()
+                }
+            }
+            Component {
+                id: tipsFace
+                TipsCard {
+                    // The card folds away with what it last said, as the cards of rows do.
+                    readonly property var current: rail.desk.tipsModel
+                    property var last: null
+                    onCurrentChanged: if (current) last = current
+                    Component.onCompleted: if (current) last = current
+                    model: current || last
+                    onTurnRequested: dir => rail.desk.tipsTurn(dir)
+                    onOpenRequested: (id, play) => rail.desk.tipsOpen(id, play)
+                    onTryRequested: id => rail.desk.tipsTry(id)
+                    onHideRequested: rail.desk.putAway("tips")
                 }
             }
             Component {

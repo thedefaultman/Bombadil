@@ -105,7 +105,7 @@ under TCG even the resting bar and the compositor's slice of it are above 10%.
 ### A fixed-height bar costs nothing extra
 
 The bar is a layer surface as tall as what is in it, so a picture or a card that appears resizes it
-([`pictures.md`](pictures.md) lists what that does to the pill). Making it a fixed height would never resize
+([the cards and pictures page](architecture/cards-and-pictures.md#where-the-card-sits) lists what that does to the pill). Making it a fixed height would never resize
 it, at the price of a large transparent surface kept composited. The same measurements with the bar's
 `implicitHeight` fixed at 600 px and at the full 1080 px:
 
@@ -128,7 +128,7 @@ The pictures work can fix the height without this cost in its way.
 | `tests/test_pill_qml.py` | the seconds counter is zero unless a turn works | cause 3 |
 | `tests/test_theme.py`, `tests/test_appkit_runtime.py` | the launcher and the kit export the timeout, and keep a person's own value | cause 1 |
 | `tests/desktop/idle.py` (run by `tests/desktop/run.sh`) | the bar's frames per second and the stack's CPU, in three quiet scenes | all three, apart from cause 1's size on a fast compositor |
-| `iso/.../bombadil-smoke`, check `idle-cpu` | Hyprland, the bar, the daemon and the brain together, in the real VM, after the whole smoke has run: three 10 s slices, the middle one under 30% of a core | cause 1 and the rest, on the real compositor |
+| `iso/.../bombadil-smoke`, check `idle-cpu` | Hyprland, the bar, the daemon and the brain together, in the real VM, after the whole smoke has run: three 10 s slices, the median under 30% of a core | cause 1 and the rest, on the real compositor |
 
 `tests/desktop/idle.py` starts sway, agentd, the brain and the bar (`WAYLAND_DEBUG=client` on the bar),
 waits 30 s, and samples 20 s in each of three scenes: the sign-in line alone (what a new machine shows),

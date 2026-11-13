@@ -34,6 +34,7 @@ env = dict(
     BOMBADIL_PROVIDER="claude",
     BOMBADIL_SHARE=str(REPO / "share"),
     BOMBADIL_BAR_INJECT="1",   # the bar takes injected notices (section 10); a bar on the image does not
+    BOMBADIL_TIPS="0",      # no card of Tips over the sections that are not about it (section 32 starts agentd with it on)
     BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
     # Connections run on their fake engine, in the container's own folders: the service, agentd and the shell all read
     # these, and a container's user is outside the service's default range of people (1000 to 59999).
@@ -1641,15 +1642,18 @@ check("a card let go in the middle of the screen stays where it was",
       (st["rails"], st["order"], st["stripped"]) == before and st.get("drag") is None
       and wait(lambda m: m.get("type") == "desk", 0.5, n) is None, (st["order"], st.get("drag")))
 
-# put the desk back as it was, for what follows
-send({"type": "desk", "op": "move", "widget": "machine", "rail": "right"})
+# put the desk back as it was, for what follows. Machine goes first, so that it has left the left rail when Watching
+# is put second there. Watching is still in the right rail then and holds a place in it, so Machine's rank is 3:
+# after Watching, Needs you and Away and before Tips (it is 2 once Watching has gone).
+send({"type": "desk", "op": "move", "widget": "machine", "rail": "right", "rank": 3})
 send({"type": "desk", "op": "move", "widget": "watching", "rail": "left", "rank": 1})
 inject({"type": "jobs", "jobs": []})
 inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
 inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})
 time.sleep(0.8)
 st = desk_state()
-check("and the desk is as it was", st["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
+check("and the desk is as it was",
+      st["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine", "tips"]}
       and st["stripped"] == [], (st["order"], st["stripped"]))
 
 # 13. Away: the card that says what happened while the person was gone. The turn log is agentd's own file, so the
@@ -1762,6 +1766,7 @@ WIDGET_ROWS = [   # the Widgets card's rows in the order it draws them (Alive ha
     {"id": "needs", "title": "Needs you", "question": "What is waiting for me?", "can": ["needed"]},
     {"id": "away", "title": "Away", "question": "What happened while I was gone?", "can": ["needed", "off"]},
     {"id": "machine", "title": "Machine", "question": "Is the machine in trouble?", "can": ["keep", "needed", "off"]},
+    {"id": "tips", "title": "Tips", "question": "What can I ask it to do?", "can": ["keep", "needed", "off"]},
 ]
 # A Machine at rest with no line crossed, as vitals.py says it: memory, the disk and the processor are meters (figures
 # rounded), only the network is plain, every tone is "you", and the chip names the reading nearest its line, no dot.
@@ -1829,7 +1834,8 @@ check("the word widgets makes agentd ask for the Widgets card, and the bar opens
       asked is not None and st.get("widgetsOpen") is True and api_requests() == before and st.get("kept") == [],
       (asked, st.get("widgetsOpen"), st.get("kept"), api_requests() - before))
 rows = [{k: r.get(k) for k in ("id", "title", "question", "can")} for r in st.get("widgets") or []]
-check("it lists Now, Watching, Needs you, Away and Machine, each with what it can be (Needs you: only when needed)",
+check("it lists Now, Watching, Needs you, Away, Machine and Tips, each with what it can be (Needs you: only when "
+      "needed)",
       rows == WIDGET_ROWS, rows)
 check("Quickshell draws the card above the pill", up - bare > 150, f"{bare} -> {up}")
 
@@ -2548,6 +2554,210 @@ check("end reviewer ends it and keeps its copy",
           lambda: "bombadil-spike-reviewer" not in zlisted(), 10) and copy.is_dir(), e)
 time.sleep(1)
 shot("39-ended")
+
+# 32. Tips: the card on the desk's right rail, for a new person's first week. Every section above runs with Tips
+# off (BOMBADIL_TIPS=0, as the pytest suite does) so no card sits over what they check; agentd is started once
+# more with it on and the real chain is walked: agentd's card, the face on the rail, the arrows and the x, the
+# button (the words go to the pill and nothing runs), the person's own Enter (the words are their ask, so the tip
+# is tried), and the card turning to the next tip 12 s after that turn ends.
+run("swaymsg", '[app_id=".*"] kill')       # a window over the right rail would fold the card to its strip
+time.sleep(1.5)
+# The card comes up on a calm shell only (nothing else asking for the person), and the sections above leave what they
+# drew: the Slack reply card the connect section ended on stays in the shell until it is put away, the way the
+# person's x puts it away (the same message agentd sends when a card is gone).
+left = pill_state().get("card") or {}
+if left.get("id"):
+    inject({"type": "card", "card": {"gone": True, "id": left["id"]}})
+until_state(lambda st: not st.get("card"), 5)
+old_agentd =[p for p in procs if p.args[0].endswith("agentd")][-1]
+old_agentd.terminate()
+old_agentd.wait(5)
+procs.remove(old_agentd)
+env.pop("BOMBADIL_TIPS", None)
+start("agentd-tips", [str(REPO / "bin" / "agentd")])
+until(lambda: sock_path.exists(), 10)
+time.sleep(4)
+n = mark()
+threading.Thread(target=listen, args=("a",), daemon=True).start()
+card_msg = wait(lambda m: m.get("type") == "tips" and m.get("present") is True, 40, n)
+card = (card_msg or {}).get("card") or {}
+check("agentd sends the card: the first Start-here tip, its words, and the whole row for the picture",
+      card.get("id") == "make-an-app" and card.get("words") == "Make me a ticketing app"
+      and card.get("why", "").startswith("Start here \u00b7 1 of ") and card.get("tip", {}).get("captions"), card)
+st = {}
+for _ in range(120):                       # calm: the line the restart left has to fade first
+    st = desk_state()
+    if st.get("faces", {}).get("tips") == "full":
+        break
+    time.sleep(0.5)
+tslot = (st.get("slots") or {}).get("tips") or {}
+shot("44-tips-card")
+check("the card is up in full on the right rail, 300 by 290, showing agentd's tip",
+      st.get("faces", {}).get("tips") == "full" and tslot.get("side") == "right"
+      and (tslot.get("w"), tslot.get("h")) == (300, 290) and (st.get("tips") or {}).get("id") == "make-an-app",
+      (st.get("faces"), tslot, (st.get("tips") or {}).get("id")))
+tbox = (tslot.get("x", 0), tslot.get("y", 0), tslot.get("w", 0), tslot.get("h", 0))
+ink_px = region_pixels("44-tips-card", tbox, "#e6e8eb")
+accent_px = region_pixels("44-tips-card", (tbox[0], tbox[1], 300, 50), "#d97757")
+check("it draws its title, its line and the button's words, and its header is neutral (no accent)",
+      ink_px > 200 and accent_px < 10, (ink_px, accent_px))
+
+# The arrows and the x show only while the pointer is on the card.
+corner = (tbox[0] + 300 - 8 - 72, tbox[1] + 8, 72, 24)
+pointer("move 20 20")
+time.sleep(0.6)
+shot("44a-tips-pointer-away")
+away_px = region_pixels("44a-tips-pointer-away", corner, "#8b939c")
+pointer(f"move {tbox[0] + 150} {tbox[1] + 120}")
+time.sleep(0.8)
+shot("44b-tips-pointer-on")
+on_px = region_pixels("44b-tips-pointer-on", corner, "#8b939c")
+check("the arrows and the x fade in with the pointer on the card and are gone without it",
+      on_px >= 15 and on_px > 3 * away_px, (away_px, on_px))
+
+# The button: a press puts the words in the pill (through agentd), and nothing runs.
+n = mark()
+pointer(f"move {tbox[0] + 54} {tbox[1] + 262}")
+time.sleep(0.3)
+pointer("press")
+time.sleep(0.15)
+pointer("release")
+pressed = wait(lambda m: m.get("type") == "summon" and m.get("tip") is True, 10, n)
+check("the button sends the tip's exact words to agentd, which gives them to the pill as a tip's",
+      pressed and pressed.get("text") == "Make me a ticketing app", pressed)
+check("and nothing runs on a press: no turn starts",
+      wait(ev("turn_start"), 3, n) is None and pill_state().get("mode") == "idle", pill_state().get("mode"))
+time.sleep(0.5)
+shot("45-tips-words-in-the-pill")
+
+# The person's own Enter runs them as their ask, which tries the tip; 12 s after the turn ends the card turns.
+n = mark()
+key("Return")
+started = wait(ev("turn_start", prompt="Make me a ticketing app"), 10, n)
+check("Enter sends the words as the person's ask", started, started)
+ended = wait(ev("turn_end"), 60, n)
+turned = wait(lambda m: m.get("type") == "tips" and (m.get("card") or {}).get("id") == "picture", 40, n)
+check("12 s after the turn ends agentd turns the card to the next tip",
+      ended and turned and turned["_t"] - ended["_t"] > 8, turned and ended and turned["_t"] - ended["_t"])
+time.sleep(1)
+st = desk_state()
+shot("46-tips-card-turned")
+check("the shell shows it, and the card stayed up through the turn",
+      st["faces"]["tips"] == "full" and (st.get("tips") or {}).get("id") == "picture", (st.get("faces"), st.get("tips")))
+tips_file = json.loads((Path.home() / ".local" / "state" / "bombadil" / "tips.json").read_text())
+check("tips.json keeps that the first was tried (and nothing about the second)",
+      "make-an-app" in tips_file.get("tried", []) and "picture" not in tips_file.get("tried", []), tips_file)
+
+# The x puts Tips away, the same as the words "hide tips".
+tslot = (desk_state().get("slots") or {}).get("tips") or {}      # (absent when the card is not up: the checks say so)
+pointer(f"move {tslot.get('x', 0) + 150} {tslot.get('y', 0) + 120}")
+time.sleep(0.8)
+pointer(f"move {tslot.get('x', 0) + 300 - 8 - 12} {tslot.get('y', 0) + 8 + 12}")
+time.sleep(0.3)
+n = mark()
+pointer("press")
+time.sleep(0.15)
+pointer("release")
+gone = wait(lambda m: m.get("type") == "tips" and m.get("present") is False, 10, n)
+said = wait(ev("local", phase="done", target="tips"), 5, n)
+time.sleep(1.2)
+st = desk_state()
+shot("47-tips-put-away")
+check("the x puts Tips away: the card goes and agentd stops saying it",
+      gone and st["faces"]["tips"] == "hidden" and "tips" in st["hidden"], (st.get("faces"), st.get("hidden")))
+check("and the line says the way back, as the words \"hide tips\" do",
+      said and said.get("text") == "Put Tips away. Say tips to see them again.", said)
+
+# "tips" is the Tips app's word and never the card's: with the card put away it opens the app (a window of its own
+# here, the drawers are Hyprland's), the line says so, and the card stays away. "Say tips to see them again" is about
+# the tips, which the app lists; the card comes back by "keep tips" below.
+before = api_requests()
+opened = desk_word("tips")
+check('the word "tips" answers Opened Tips., and no model is called',
+      opened and opened.get("ok") and opened.get("text") == "Opened Tips." and api_requests() == before,
+      opened and (opened.get("ok"), opened.get("text")))
+
+
+def tips_app_up():
+    return "bombadil-app-tips" in run("swaymsg", "-t", "get_tree").stdout
+
+
+check("and the Tips app is up as a window", until(tips_app_up, 60), run("swaymsg", "-t", "get_tree").stdout[-300:])
+time.sleep(1)
+st = desk_state()
+text, data = desk_toml()
+shot("47a-tips-word-opens-the-app")
+check("and the card is still away: the word did not bring it back (desk.toml and the bar agree)",
+      "tips" in data.get("hidden", []) and "tips" in (st.get("hidden") or [])
+      and (st.get("faces") or {}).get("tips") == "hidden", (data.get("hidden"), st.get("hidden"), st.get("faces")))
+run("swaymsg", '[app_id="bombadil-app-tips"] kill')       # a window over the right rail would fold the card
+until(lambda: not tips_app_up(), 10)
+time.sleep(1)
+
+# "keep tips" is a launcher word: it brings the card back for good (a kept Tips is present whatever the first week
+# says), the sentence says so, desk.toml keeps it, and the card comes up once the line has faded.
+summon()
+typ("keep tips")
+n = mark()
+before = api_requests()
+key("Return")
+said = wait(ev("local", phase="done"), 10, n)
+back = wait(lambda m: m.get("type") == "tips" and m.get("present") is True, 10, n)
+check('the words "keep tips" answer that Tips stays on the desk, and no model is called',
+      said and said.get("ok") and said.get("text") == "Tips stays on the desk." and api_requests() == before,
+      said and (said.get("ok"), said.get("text")))
+text, data = desk_toml()
+check("desk.toml keeps Tips, and Tips is no longer put away", "tips" in data.get("kept", [])
+      and "tips" not in data.get("hidden", []), (data.get("kept"), data.get("hidden")))
+st = desk_until(lambda s: (s.get("faces") or {}).get("tips") == "full", 30)
+shot("48-tips-kept")
+check("agentd says the card again and the card is back in full on the right rail, still 300 by 290",
+      back and (st.get("faces") or {}).get("tips") == "full" and "tips" in (st.get("kept") or [])
+      and ((st.get("slots") or {}).get("tips") or {}).get("h") == 290, (back, st.get("faces"), st.get("kept")))
+check("the Tips card raised no QML error",
+      not [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text()).splitlines()
+           if re.search(r"TipsCard|Tips[A-Z]\w*\.qml", ln) and re.search(r"\.qml\[|\.qml:\d+|Unable to assign|TypeError", ln)],
+      "")
+
+# The card's picture is a door to the same app: a press asks agentd to open the Tips app on this tip. agentd keeps the
+# tip in tips.json for the app, shows the app, and the app reads the request and says it did (`opened`), which clears
+# it: the whole chain from the card to the window, with no model.
+tips_json = Path.home() / ".local" / "state" / "bombadil" / "tips.json"
+
+
+def open_on():
+    """The tip tips.json asks the app to open on ("" once it said it did); None while the file cannot be read."""
+    try:
+        return json.loads(tips_json.read_text()).get("open_on")
+    except (OSError, ValueError):
+        return None
+
+
+tslot = desk_state()["slots"]["tips"]
+n = mark()
+before = api_requests()
+pointer(f"move {tslot['x'] + 150} {tslot['y'] + 120}")
+time.sleep(0.8)
+pointer("press")
+time.sleep(0.15)
+pointer("release")
+check("a press on the card's picture opens the Tips app",
+      until(tips_app_up, 60), run("swaymsg", "-t", "get_tree").stdout[-300:])
+cleared = until(lambda: open_on() == "", 60)
+shot("49-tips-app-from-the-card")
+check("the app read the request and said so: agentd cleared it, and nothing ran (no turn, no model call)",
+      cleared and api_requests() == before and wait(ev("turn_start"), 1, n) is None,
+      (open_on(), api_requests() - before))
+run("swaymsg", '[app_id="bombadil-app-tips"] kill')
+until(lambda: not tips_app_up(), 10)
+
+# The desk as what comes after expects it (idle.py starts its own stack in this same home): nothing kept. "hide tips"
+# on a kept Tips only stops keeping it, and says where the app is.
+last = desk_word("hide tips")
+text, data = desk_toml()
+check("hide tips on a kept Tips says it is no longer kept, and where the app is; desk.toml keeps nothing",
+      last and last.get("ok") and last.get("text") == "Tips is no longer kept. Say tips to open the app."
+      and not data.get("kept") and "tips" not in data.get("hidden", []), (last and last.get("text"), data))
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:

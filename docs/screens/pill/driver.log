@@ -8,7 +8,7 @@ PASS quit passwords answered locally  ({'type': 'event', 'kind': 'local', 'turn'
 PASS passwords opened by name with no model call  (({'type': 'event', 'kind': 'local', 'turn': None, 'action': 'app', 'target': 'passwords', 'phase': 'done', 'ok': True, 'text': 'Opened Passwords.', '_t': 8044.568076042}, 0))
 PASS launcher answered in under 0.5 s  (0.011)
 PASS docker step is amber with its command  ({'type': 'event', 'kind': 'status', 'text': 'Installing docker', 'risk': 'system', 'command': "sudo sh -c 'echo installing docker; sleep 120'", 'source': 'step', 'turn': 3, '_t': 8049.302606864})
-PASS root sleep running under sudo  (['    213 u        /usr/bin/bash -c source /home/u/.claude/shell-snapshots/snapshot-bash-1790505786090-vdw26f.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- \'unsetenv\'; \\builtin unset -f -- \'unsetenv\'; } >/dev/null 2>&1 || true && eval \'sudo sh -c \'"\'"\'echo installing docker; sleep 120\'"\'"\'\' < /dev/null && pwd -P >| /tmp/claude-a7fc-cwd', '    215 root     sudo sh -c echo installing docker; sleep 120', '    217 root     sleep 120'])
+PASS root sleep running under sudo  (['    213 u        /usr/bin/bash -c eval \'sudo sh -c \'"\'"\'echo installing docker; sleep 120\'"\'"\'\'', '    215 root     sudo sh -c echo installing docker; sleep 120', '    217 root     sleep 120'])
 PASS second prompt waits as a chip  ({'type': 'event', 'kind': 'queued', 'turn': 4, 'prompt': 'tell me a joke', '_t': 8051.685124291})
 PASS Esc stopped the turn and said what it stopped  (Stopped while installing docker.)
 PASS no sleep 120 left, root one included

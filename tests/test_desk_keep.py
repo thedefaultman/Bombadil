@@ -39,8 +39,9 @@ def test_the_shipped_desk_keeps_nothing_and_can_be_asked_which_state_each_widget
     ([("show", "alive"), ("keep", "alive")], True, "Alive shows only while something is being touched."),
     ([("keep", "away")], True, "Away shows only after you have been away."),
     ([("keep", "sofa")], False, ("There is no widget called 'sofa'. The widgets are Now, Watching, Alive, "
-                                 "Needs you, Away and Machine.")),
-    ([("keep", None)], False, "Which widget? The widgets are Now, Watching, Alive, Needs you, Away and Machine."),
+                                 "Needs you, Away, Machine and Tips.")),
+    ([("keep", None)], False,
+     "Which widget? The widgets are Now, Watching, Alive, Needs you, Away, Machine and Tips."),
     # ...unless it is put away, where it does not show at all: the answer says how it comes back. Alive ships that way.
     ([("hide", "watching"), ("keep", "watching")], True, "Watching is put away. Say show watching to bring it back."),
     ([("keep", "alive")], True, "Alive is put away. Say show alive to bring it back."),
@@ -75,9 +76,9 @@ def test_the_shipped_desk_keeps_nothing_and_can_be_asked_which_state_each_widget
     ([("set", "machine", None, None, "loud")], False, "A widget is kept, shown when needed, or off."),
     ([("set", "machine", None, None, None)], False, "A widget is kept, shown when needed, or off."),
     ([("set", "sofa", None, None, "off")], False, ("There is no widget called 'sofa'. The widgets are Now, "
-                                                    "Watching, Alive, Needs you, Away and Machine.")),
+                                                    "Watching, Alive, Needs you, Away, Machine and Tips.")),
     ([("set", None, None, None, "off")], False,
-     "Which widget? The widgets are Now, Watching, Alive, Needs you, Away and Machine."),
+     "Which widget? The widgets are Now, Watching, Alive, Needs you, Away, Machine and Tips."),
 ])
 def test_what_keeping_says_and_does(home, ops, ok, text):
     d = fresh()
@@ -123,9 +124,9 @@ def test_keeping_a_widget_that_was_folded_by_hand_gives_its_card_back(home):
 def test_the_state_in_words_says_what_is_kept(home):
     d = fresh()
     d.apply("keep", "machine")
-    assert d.apply("state")[1].endswith("Right rail: Needs you, Away, Machine (kept on the desk).")
+    assert d.apply("state")[1].endswith("Right rail: Needs you, Away, Machine (kept on the desk), Tips.")
     d.apply("fold", "machine")
-    assert d.apply("state")[1].endswith("Machine (kept on the desk) (folded to a strip).")
+    assert d.apply("state")[1].endswith("Machine (kept on the desk) (folded to a strip), Tips.")
 
 
 def test_a_change_of_state_calls_back_once_and_a_repeat_does_not(home):
@@ -291,10 +292,11 @@ def test_a_file_that_keeps_away_by_hand_keeps_nothing(home):
 
 def test_the_widgets_card_lists_what_the_desk_lists_and_what_each_can_be(home):
     rows = fresh().snapshot()["widgets"]
-    assert [r["id"] for r in rows] == ["now", "watching", "needs", "away", "machine"]      # Alive waits for its feed
+    # Alive waits for its feed
+    assert [r["id"] for r in rows] == ["now", "watching", "needs", "away", "machine", "tips"]
     assert {r["id"]: r["can"] for r in rows} == {
         "now": ["needed", "off"], "watching": ["needed", "off"], "needs": ["needed"], "away": ["needed", "off"],
-        "machine": ["keep", "needed", "off"]}
+        "machine": ["keep", "needed", "off"], "tips": ["keep", "needed", "off"]}
     assert all(r["title"] and r["question"].endswith("?") for r in rows)
     # Every state a row says it can take is one the desk really takes, from wherever the widget stands.
     for r in rows:
@@ -307,7 +309,7 @@ def test_the_widgets_card_lists_what_the_desk_lists_and_what_each_can_be(home):
 
 
 def test_which_states_a_widget_can_take():
-    assert desk.can("machine") == ("keep", "needed", "off")
+    assert desk.can("machine") == ("keep", "needed", "off") and desk.can("tips") == ("keep", "needed", "off")
     assert desk.can("now") == ("needed", "off") and desk.can("watching") == ("needed", "off")
     assert desk.can("needs") == ("needed",) and desk.can("Needs you") == ("needed",)
     assert desk.can("sofa") == () and desk.can(None) == ()

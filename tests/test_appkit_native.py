@@ -1197,7 +1197,7 @@ def test_agent_reply_only_for_this_apps_turns(kit, monkeypatch, tmp_path):
 
 
 @contextlib.contextmanager
-def _agentd(monkeypatch, tmp_path, provider):
+def _agentd(monkeypatch, tmp_path, provider, **kw):
     """A real agentd on a socket in tmp_path, served from a thread."""
     from bombadil import agentd
 
@@ -1207,7 +1207,7 @@ def _agentd(monkeypatch, tmp_path, provider):
     # The voice asks its card when the fake provider turns ready: persona.toml and the greeted marker.
     monkeypatch.setenv("BOMBADIL_CONFIG", str(tmp_path / "config"))
     monkeypatch.setenv("BOMBADIL_RUNTIME", str(tmp_path / "run"))
-    daemon = agentd.AgentD(provider, agentd._NoSnapshots(), socket_path=sock)
+    daemon = agentd.AgentD(provider, agentd._NoSnapshots(), socket_path=sock, **kw)
     loop = asyncio.new_event_loop()
     task = loop.create_task(daemon.serve())
 
@@ -1219,13 +1219,17 @@ def _agentd(monkeypatch, tmp_path, provider):
         rest = asyncio.all_tasks(loop)
         for t in rest:
             t.cancel()
-        loop.run_until_complete(asyncio.gather(*rest, return_exceptions=True))
+
+        async def drain():      # gather() outside a running loop asks for the thread's current loop when `rest` is empty
+            await asyncio.gather(*rest, return_exceptions=True)
+
+        loop.run_until_complete(drain())
         loop.close()
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
     try:
-        yield
+        yield daemon
     finally:
         loop.call_soon_threadsafe(task.cancel)
         thread.join(2)
@@ -1284,3 +1288,312 @@ def test_agent_stays_offline_in_check(kit, checking, monkeypatch, tmp_path):
     a.start()
     a.ask("hello")
     assert a._retry.isActive() is False and a._outbox == [] and a.property("connected") is False
+
+
+# -- Agent.draft: words in the pill, nothing sent --
+
+class _Lines:
+    """A listener on agentd's socket the way the shell is one: every line agentd says to it, as JSON."""
+
+    def __init__(self, path):
+        from PySide6.QtNetwork import QLocalSocket
+
+        self.got, self._buf = [], b""
+        assert wait_until(lambda: Path(path).exists(), 5000)        # agentd is up
+        self.socket = QLocalSocket()
+        self.socket.readyRead.connect(self._read)
+        self.socket.connectToServer(str(path))
+
+    def _read(self):
+        self._buf += bytes(self.socket.readAll().data())
+        *lines, self._buf = self._buf.split(b"\n")
+        self.got += [json.loads(line) for line in lines if line.strip()]
+
+    def of(self, kind):
+        return [m for m in self.got if m.get("type") == kind]
+
+    def close(self):
+        self.socket.abort()
+
+
+class _Server:
+    """A plain socket server in a thread that keeps what every connection sent and whether it hung up."""
+
+    def __init__(self, path):
+        import socket
+
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.bind(str(path))
+        self.sock.listen()
+        self.connections, self.lines, self.hung_up = 0, [], 0
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            self.connections += 1
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+
+    def _serve(self, conn):
+        buf = b""
+        while True:
+            try:
+                data = conn.recv(65536)
+            except OSError:
+                break
+            if not data:
+                break
+            buf += data
+        self.lines += [json.loads(line) for line in buf.split(b"\n") if line.strip()]
+        self.hung_up += 1
+        conn.close()
+
+    def close(self):
+        self.sock.close()
+
+
+def test_draft_puts_the_words_in_the_pill_and_sends_nothing(kit, monkeypatch, tmp_path):
+    from bombadil import providers
+    from bombadil.appkit.native.agent import Agent
+    from bombadil.tips import Tips
+
+    tips = Tips(path=tmp_path / "tips.json")
+    with _agentd(monkeypatch, tmp_path, providers.Fake("x"), tips=tips) as daemon:
+        shell = _Lines(tmp_path / "agentd.sock")
+        a = Agent(kit.ctx)
+        try:
+            assert wait_until(lambda: shell.of("status"), 5000)
+            a.draft("Make me a ticketing app", "make-an-app")
+            assert wait_until(lambda: shell.of("summon"), 5000)
+            assert shell.of("summon") == [{"type": "summon", "text": "Make me a ticketing app", "tip": True}]
+            assert tips._summoned == {"Make me a ticketing app": "make-an-app"}   # agentd knows whose words
+            spin(200)
+            assert daemon.next_id == 0 and daemon.pending == [] and daemon.current is None  # no turn, no ask
+            assert a.property("connected") is False and a._started is False                 # no line kept open
+        finally:
+            shell.close()
+
+
+def test_draft_keeps_the_words_exactly_and_names_a_tip_only_when_it_is_given(kit, monkeypatch, tmp_path):
+    from bombadil.appkit.native import agent as agent_mod
+    from bombadil.appkit.native.agent import Agent
+
+    server = _Server(tmp_path / "agentd.sock")
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(tmp_path / "agentd.sock"))
+    monkeypatch.setattr(agent_mod, "SHOT_SECONDS", 30)    # so only the line being written can close the connection
+    a = Agent(kit.ctx)
+    try:
+        a.draft("In Tickets, add ")                  # the cursor waits after the space, for the person's detail
+        a.draft("pause Claude", "pause")
+        assert wait_until(lambda: len(server.lines) == 2 and server.hung_up == 2, 5000)
+        assert sorted(server.lines, key=lambda m: m["text"]) == [
+            {"type": "summon", "text": "In Tickets, add ", "tip": True},
+            {"type": "summon", "text": "pause Claude", "tip": True, "id": "pause"}]
+        assert server.connections == 2             # each on its own connection, and each hung up
+    finally:
+        server.close()
+
+
+def test_draft_says_nothing_for_nothing_and_in_check(kit, checking, monkeypatch, tmp_path):
+    from bombadil.appkit.native.agent import Agent
+
+    server = _Server(tmp_path / "agentd.sock")
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(tmp_path / "agentd.sock"))
+    try:
+        a = Agent(kit.ctx)
+        a.draft("Make me a ticketing app", "make-an-app")      # `check` is read-only: it never connects or sends
+        kit.ctx.check = False
+        a.draft("")
+        a.draft("   ")
+        spin(300)
+        assert server.connections == 0 and server.lines == []
+    finally:
+        kit.ctx.check = True
+        server.close()
+
+
+def test_draft_with_agentd_away_does_nothing_and_leaves_nothing_behind(kit, monkeypatch, tmp_path):
+    from bombadil.appkit.native import agent as agent_mod
+    from bombadil.appkit.native.agent import Agent, _OneShot
+
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(tmp_path / "none.sock"))
+    monkeypatch.setattr(agent_mod, "SHOT_SECONDS", 30)    # so only the refused connection can end it
+    a = Agent(kit.ctx)
+    a.draft("Make me a ticketing app", "make-an-app")         # nobody listens: no error, nothing queued
+    assert wait_until(lambda: not a.findChildren(_OneShot), 3000)
+    assert a._outbox == [] and a._started is False and a._retry.isActive() is False
+
+
+def test_a_draft_that_is_never_written_is_given_up_on(kit, monkeypatch, tmp_path):
+    """A server that accepts and never reads cannot hold the one-shot: it is dropped after SHOT_SECONDS."""
+    import socket
+
+    from bombadil.appkit.native import agent as agent_mod
+
+    path = tmp_path / "agentd.sock"
+    deaf = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    deaf.bind(str(path))
+    deaf.listen(1)                                              # connects (the backlog takes it), never reads
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(path))
+    monkeypatch.setattr(agent_mod, "SHOT_SECONDS", 0.2)
+    a = agent_mod.Agent(kit.ctx)
+    try:
+        a.draft("x" * 400_000)                                  # more than the socket buffer takes at once
+        assert wait_until(lambda: not a.findChildren(agent_mod._OneShot), 3000)
+    finally:
+        deaf.close()
+
+
+@contextlib.contextmanager
+def _qt_messages():
+    """Everything Qt and QML print while the block runs (a binding loop is a warning there)."""
+    from PySide6.QtCore import qInstallMessageHandler
+
+    messages: list[str] = []
+    qInstallMessageHandler(lambda mode, context, text: messages.append(text))
+    try:
+        yield messages
+    finally:
+        qInstallMessageHandler(None)
+
+
+def _fresh_agent():
+    """The QML singleton as a new app would find it: not started, not connected, no timer. It is made once per
+    engine, so a test puts it back before it looks and after."""
+    a = native.agent._instance
+    if a is not None:
+        a._started = False
+        a._retry.stop()
+        a._socket.abort()
+        a._retry.stop()
+        a._connected = False
+        a._retry.setInterval(3000)
+    return a
+
+
+def test_an_app_that_only_drafts_holds_no_connection_but_one_that_reads_the_agent_connects(kit, monkeypatch, tmp_path):
+    """The QML singleton connects the first time the app looks at the agent's state or asks, not when it is made:
+    the Tips app drafts and nothing more, and an open line would count as a bar for the machine sampler."""
+    server = _Server(tmp_path / "agentd.sock")
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(tmp_path / "agentd.sock"))
+    _fresh_agent()
+    with _qt_messages() as messages:
+        obj = make(kit, """Item { Component.onCompleted: {
+            Agent.draft('desk', 'desk'); Agent.draft('Where did my disk go?') } }""")
+        try:
+            a = native.agent._instance
+            assert a is not None and a._lazy is True
+            assert wait_until(lambda: len(server.lines) == 2 and server.hung_up == 2)
+            assert sorted(server.lines, key=lambda m: m["text"]) == [
+                {"type": "summon", "text": "Where did my disk go?", "tip": True},      # one argument: no id
+                {"type": "summon", "text": "desk", "tip": True, "id": "desk"}]
+            spin(300)
+            assert a._started is False and server.connections == 2 and server.hung_up == 2   # drafts only
+            unrelated = make(kit, "Item { property bool flag: true; property int count: 3 }")       # looks at nothing of it
+            spin(100)
+            assert a._started is False and server.connections == 2
+            destroy(unrelated)
+            reads = make(kit, "Item { property bool up: Agent.connected }")
+            assert wait_until(lambda: a._started and server.connections == 3, 3000)     # looking connects
+            destroy(reads)
+        finally:
+            _fresh_agent()
+            server.close()
+            destroy(obj)
+    assert messages == []
+
+
+BINDINGS = """Item {
+    property bool up: Agent.connected
+    property bool idle: !Agent.busy
+    property string who: Agent.provider
+    property string said: Agent.note + Agent.reply
+    property bool can: Agent.ready
+}"""
+
+
+def test_a_binding_on_the_agent_logs_no_error_and_reads_the_real_value_with_agentd_up_and_down(
+        kit, monkeypatch, tmp_path):
+    """The first look connects, and the connection can be made inside the binding that looks: that binding must
+    not be told of a change while it evaluates (QML calls that a binding loop and logs an error). It reads the
+    value the connection already has, as it did when the singleton connected as it was made."""
+    path = tmp_path / "agentd.sock"
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(path))
+    server = _Server(path)
+    _fresh_agent()
+    with _qt_messages() as messages:
+        up = make(kit, BINDINGS)
+        try:
+            a = native.agent._instance
+            assert up.property("up") is True and a._started is True                # no later than the first read
+            assert up.property("idle") is True and up.property("can") is True
+            server.close()
+            a._socket.abort()
+            assert wait_until(lambda: up.property("up") is False, 3000)             # and it keeps following
+        finally:
+            _fresh_agent()
+            destroy(up)
+    assert messages == []
+
+    # agentd away: false at the first look, no error, and true when it comes back.
+    path.unlink()
+    _fresh_agent()
+    with _qt_messages() as messages:
+        down = make(kit, BINDINGS)
+        again = None
+        try:
+            a = native.agent._instance
+            assert down.property("up") is False and a._started is True and a._retry.isActive()
+            a._retry.setInterval(50)
+            again = _Server(path)
+            assert wait_until(lambda: down.property("up") is True, 3000)
+        finally:
+            _fresh_agent()
+            if again is not None:
+                again.close()
+            destroy(down)
+    assert messages == []
+
+
+def test_listening_to_the_agent_connects_it_too_and_a_handler_may_read_it(kit, monkeypatch, tmp_path):
+    """An app that only listens (`Connections { target: Agent }`) never reads a property until the signal comes:
+    it has to be connected for the signal to come."""
+    path = tmp_path / "agentd.sock"
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(path))
+    server = _Server(path)
+    _fresh_agent()
+    with _qt_messages() as messages:
+        obj = make(kit, """Item {
+            property var seen: []
+            Connections { target: Agent; function onConnectedChanged() { seen = seen.concat([Agent.connected]) } }
+        }""")
+        try:
+            a = native.agent._instance
+            assert a._started is True and a._connected is True                      # listening woke it
+            a._socket.disconnectFromServer()
+            assert wait_until(lambda: js(obj.property("seen")) == [False], 3000)
+            a._retry.setInterval(50)
+            assert wait_until(lambda: js(obj.property("seen")) == [False, True], 3000)
+        finally:
+            _fresh_agent()
+            server.close()
+            destroy(obj)
+    assert messages == []
+
+
+def test_asking_connects_a_lazy_agent_too(kit, monkeypatch, tmp_path):
+    from bombadil.appkit.native.agent import Agent
+
+    server = _Server(tmp_path / "agentd.sock")
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(tmp_path / "agentd.sock"))
+    a = Agent(kit.ctx, lazy=True)
+    try:
+        a.ask("hello")
+        assert wait_until(lambda: a._started and server.connections == 1, 3000)
+    finally:
+        a._retry.stop()
+        a._socket.abort()
+        server.close()

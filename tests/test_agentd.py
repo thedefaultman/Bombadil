@@ -787,7 +787,7 @@ async def test_the_shell_asks_for_the_desk_and_only_the_asker_is_told(home):
     await _say(w, {"type": "desk", "op": "get"})
     state = json.loads(await asyncio.wait_for(r.readline(), 5))
     assert state == d.desk.snapshot() and state["type"] == "desk" and state["folded"] is False
-    assert state["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
+    assert state["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine", "tips"]}
     # The jobs table follows, empty or not, so a bar that restarted does not keep an old one.
     assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "jobs", "jobs": []}
     assert await _silent(r) and await _silent(other_r)
@@ -1040,7 +1040,7 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
     assert (await _desk_state(tool_r))["hidden"] == ["alive", "machine"]
     for i, (msg, ok, text) in enumerate([
         ({"op": "state"}, True, ("The desk is open. Left rail, nearest the pill first: Now, Watching, "
-                                 "Alive (put away). Right rail: Needs you, Away, Machine (put away).")),
+                                 "Alive (put away). Right rail: Needs you, Away, Machine (put away), Tips.")),
         ({"op": "fold"}, True, "Folded the desk."),
         ({"op": "fold"}, True, "The desk is already folded."),
         ({"op": "unfold"}, True, "Unfolded the desk."),
@@ -1052,7 +1052,7 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
         ({"op": "show", "widget": "Machine"}, True, "Here is the machine. It is back on the desk."),
         ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
         ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
-                                                    "Watching, Alive, Needs you, Away and Machine.")),
+                                                    "Watching, Alive, Needs you, Away, Machine and Tips.")),
         ({"op": "make", "widget": "batch"}, False, ("The desk cannot make. It can show, hide, keep, set, move, "
                                                     "fold, unfold, reset, open the widgets card and say its "
                                                     "state.")),

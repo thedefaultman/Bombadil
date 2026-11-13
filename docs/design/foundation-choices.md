@@ -1,6 +1,15 @@
 # AI Linux distro: foundation choices
 
+> **Status:** Partly shipped. All seven choices are in force and each has code behind it, and the first milestone at the end of this brief is built.  
+> Shipped: choices 4, 5 and 6, where the reading note below lists what the code does differently; and the parts of the other choices that are built: Arch with btrfs and snapper, a restore point before every turn (the newest 30 are kept) and undo at the next boot (choice 1); Hyprland and the Quickshell bar, which also owns the desktop's notification name in place of `mako` (2); the `archiso` image, the QEMU scripts, the VM smoke test and the installer `bombadil-install`, which copies the image to a disk, with an encrypted or a plain btrfs layout and the ESP at `/efi`, through a guided flow at a terminal, a plan file or a disk name, and which refreshes an installed system from a newer image and keeps the home folder, with a GRUB screen for the password (3); Chromium in its own profile with the debugging port, used for tabs, and the reading half of a browser service (`bombadil-browserd`) that reads a page and points at an element for the Slack setup, with no `os-mcp` tool in front of it, run only against pages that imitate Slack's (7).  
+> Designed, not built: booting an old snapshot from the bootloader menu (1; the installed OS brief designs a menu for failed starts only, and nothing on `main` reads a boot counter) and the agent acting in the browser page over the DevTools protocol (7; the passenger brief, piece 3, whose groundwork is the browser service above). Idea: the custom compositor (2, "later"). A boot on real hardware (3) is not recorded anywhere in the repository.  
+> **Code:** `iso/packages.x86_64`, `iso/profiledef.sh`, `packaging/bombadil/root/usr/bin/bombadil-install`, `packaging/bombadil/root/usr/bin/bombadil-rollback`, `packaging/bombadil/root/usr/bin/bombadil-grub-config`, `packaging/bombadil/root/etc/grub.d/000_bombadil_screen`, `install/carry.list`, `src/bombadil/installplan.py`, `src/bombadil/snapshots.py` (1); `share/hypr/bombadil.lua`, `src/bombadil/hypr.py`, `shell/shell.qml`, `shell/Notifications.qml`, `src/bombadil/notifications.py` (2); `scripts/build-iso.sh`, `scripts/run-vm.sh`, `scripts/test-vm.sh` (3); `src/bombadil/agentd.py`, `src/bombadil/providers.py` (4); `src/bombadil/apps.py`, `src/bombadil/appkit/runtime.py`, `share/qml/Bombadil/` (5); `src/bombadil/mcp_server.py`, `src/bombadil/config.py` (6); `src/bombadil/browser.py`, `bin/bombadil-browser`, `src/bombadil/browserd/service.py`, `bin/bombadil-browserd`, `packaging/bombadil/root/etc/chromium/policies/managed/bombadil.json` (7)  
+> **Design:** this brief is the design and has no page. Where each choice is built: [architecture overview](../ARCHITECTURE.md), [ISO and install](../architecture/iso-and-install.md), [restore points](../architecture/restore-points.md), [shell](../architecture/shell.md), [agentd](../architecture/agentd.md), [app kit](../architecture/app-kit.md), [os-mcp](../architecture/os-mcp.md), [browser and sign-in](../architecture/browser-and-signin.md). The choices are in the [decision log](../decisions/README.md).  
+> **Verified:** 2026-11-12 against `main` at `7d37bc5`: the installer's account in the status above, read in `iso/airootfs/usr/local/bin/bombadil-install` (the guided, plan, disk and refresh ways to run it, the layout and the LUKS2 layer, `grub_theme`) and in `scripts/test-vm.sh`, and that `main` has no boot counter or `boot_ok` anywhere under `iso/`, `src/`, `bin/`, `share/` and `scripts/`. The rest of the status and the reading note were checked on 2026-11-11 against `main` at `7d17600`, by reading the code behind each claim, and the merges since do not touch them. No test was run for either check, and neither was the VM smoke test (`scripts/test-vm.sh`). Sizes, timings and what the options tables say about other distros, toolkits and browsers were not re-checked.
+
 Each section leads with the recommendation, then the alternatives. Answer with one word per choice (the **bold** word).
+
+> **Reading note.** This brief was written as a question, so its prompts to answer and to pick belong to the round in which the choices were made. The recommended option of each section is the choice in force. The text describes the design, and as of 2026-11-11 the code on `main` differs from it in three places. A restore point is taken before every turn, not only before turns that touch the system, and undo takes effect at the next boot through `bombadil-rollback`; the bootloader has no menu of old snapshots (section 1). The provider is asked at first boot in the pill, or by `bombadil-setup`, not by the installer (section 6). No os-mcp tool lets the agent act in the browser page; the DevTools port is used to list, open, raise and close tabs, and by the browser service, which can read a page and point at an element and cannot click or type, for the Slack setup only (section 7).
 
 ---
 
@@ -36,7 +45,7 @@ The shell itself (agent bar, panels, notifications) would be **Quickshell**, a t
 
 ## 3. First target → **VM**, with an ISO that also boots real hardware
 
-**Why:** a VM (QEMU with virtio-gpu) gives fast rebuild and test loops and cheap snapshots while the core is changing daily. Build it with `archiso` so the same ISO boots on your laptop whenever you want to try it.
+**Why:** a VM (QEMU with virtio-gpu) gives fast rebuild and test loops and cheap snapshots while the core is changing daily. Build it with `archiso` so the same ISO boots on a laptop whenever you want to try it.
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -70,7 +79,7 @@ The agent runs as your user with passwordless sudo and the CLIs in their full-au
 | **QML** + Python (recommended) | Instant, no build; animations; hot reload; same language as the Quickshell shell | Qt adds roughly 200 MB to the image |
 | **GTK4** + Python (libadwaita) | Native GNOME look; also no build step | Custom animations and unusual layouts are harder; different language from the shell |
 | **Rust** (egui / iced / Slint) | Fast, small binaries | Compiles take 30 s to minutes and fail often, which breaks the "created on the spot" feel |
-| **Tauri / webview** | Agents are great at HTML | It is still a web app inside a window, which is what you said you don't want |
+| **Tauri / webview** | Agents are great at HTML | It is still a web app inside a window, which the project rules out (see [real native apps](../principles.md#real-native-apps)) |
 
 ---
 

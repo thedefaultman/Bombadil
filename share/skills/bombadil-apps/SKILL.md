@@ -122,7 +122,7 @@ Forms: `Form`, `Field`, `PasswordField`. Editing: `Editor`. Feedback: `ConfirmDi
 
 Native: `App` (name, dataDir, hide(), notify(), openUrl()), `Store`, `Vault`, `System`
 (cpu, memory, disks, network, ...), `Processes`, `Command`, `TextFile`, `Clipboard`,
-`Agent` (ask the OS agent from inside the app), `Highlighter`.
+`Agent` (ask the OS agent from inside the app, or put words in the bar for the user to send), `Highlighter`.
 
 Full APIs: `references/components.md`, `references/native.md`, `references/runtime.md`
 next to this file, or `app_guide("components")`, `app_guide("native")`,

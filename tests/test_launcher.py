@@ -124,7 +124,7 @@ def test_the_desk_and_its_widgets_are_in_the_names_the_pill_completes(home):
     rank = {"app": 0, "panel": 1, "widget": 2, "command": 3}
     assert kinds == sorted(kinds, key=rank.get)   # apps, then panels, widgets and commands
     widgets = {x["name"]: x for x in e if x["kind"] == "widget"}
-    assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine"]
+    assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine", "tips"]
     assert widgets["needs"] == {"name": "needs", "title": "Needs you", "kind": "widget",
                                 "words": ["needs", "needs you"], "keep": True}
     assert "while you were away" in widgets["away"]["words"] and "route" in widgets["now"]["words"]
@@ -1154,6 +1154,140 @@ def test_send_still_answers_when_the_window_will_not_open(home, monkeypatch, cap
     assert "no screen" in capsys.readouterr().err
 
 
+# -- the Tips app's words (docs/TIPS.md) --
+
+TIPS_WORDS = ["tips", "Tips", "the tips", "open tips", "show tips", "open the tips", "Show the tips", "what can you do",
+              "What can you do?", "what can I ask", "What can I ask?", "what can i ask", "help", "Help.", "HELP", "help!"]
+
+
+@pytest.mark.parametrize("text", TIPS_WORDS)
+def test_the_tips_words_open_the_tips_app_locally(home, text):
+    a = launcher.match(text, _apps(home))
+    assert a is not None and (a.kind, a.verb, a.title) == ("tips", "open", "Tips")
+
+
+@pytest.mark.parametrize("text", [
+    "help me write a poem", "what can you do about my disk", "tips for gardening", "any tips?", "give me some tips",
+    "show tips for vim", "what can you do for me", "can you help", "help me", "helpful", "what can I ask about",
+    "open tips and tricks", "what can you", "tip", "!help", "!tips", "помощь", "tips ✨",
+])
+def test_sentences_that_only_contain_the_tips_words_go_to_the_agent(home, text):
+    assert launcher.match(text, _apps(home)) is None
+
+
+def test_the_tips_words_win_over_an_app_of_yours_but_not_over_a_core_command(home):
+    (home / "Apps" / "tips").mkdir(parents=True)             # an app of that name (it cannot be made: apps.RESERVED)
+    (home / "Apps" / "tips" / "main.qml").write_text("import QtQuick\nItem {}\n")
+    apps.create("Help", "import QtQuick\nItem {}\n")
+    for text in ("tips", "help", "open tips"):
+        assert launcher.match(text).kind == "tips", text
+    assert launcher.match("undo").kind == "undo" and launcher.match("stop").kind == "stop"
+    assert launcher.match("brain").kind == "brain"           # the neighbours' words are not moved
+    apps.create("Passwords", "import QtQuick\nItem {}\n")
+    assert launcher.match("passwords").kind == "app"
+
+
+def test_the_tips_words_win_over_the_desks_widget_words(home):
+    """Tips is a widget on the desk too: "show tips" opens the app, never the widget."""
+    assert launcher.WIDGET_WORDS["tips"] == ["tips"]
+    for text in ("tips", "show tips", "open tips", "show the tips", "open the tips"):
+        assert launcher.match(text, []).kind == "tips", text
+    widget = launcher.match("hide tips", [])                  # the widget's own words keep their verbs
+    assert (widget.kind, widget.verb, widget.target) == ("widget", "hide", "tips")
+    assert launcher.match("put tips away", []).kind == "widget"
+
+
+def test_tips_words_are_the_apps_and_hide_tips_put_tips_away_and_keep_tips_are_the_desks(home):
+    """One word, two owners: what opens the Tips app is the app's (TIPS_COMMANDS) and a person who says it is never
+    told the card came back; what stops, puts away or keeps the card is the desk's (a widget action for Desk.apply)."""
+    for text in ("tips", "show tips", "open tips", "Show Tips", "open the tips", "show the tips"):
+        a = launcher.match(text, _apps(home))
+        assert (a.kind, a.verb, a.title) == ("tips", "open", "Tips"), text
+    for text, verb in (("hide tips", "hide"), ("put tips away", "hide"), ("put the tips away", "hide"),
+                       ("keep tips", "keep"), ("keep tips on the desk", "keep"), ("Keep Tips", "keep")):
+        a = launcher.match(text, _apps(home))
+        assert (a.kind, a.target, a.verb, a.title) == ("widget", "tips", verb, "Tips"), text
+    # the desk never answers an open verb for Tips, whichever way it is said: nothing local brings the card back
+    # but "keep tips", so "bring up tips" is a sentence for the agent and not "Put Tips on the desk."
+    assert launcher.match("bring up tips", _apps(home)) is None
+    assert launcher.match("show machine", _apps(home)).kind == "widget"       # the other widgets keep their verbs
+
+
+def test_the_one_table_of_the_tips_words_decides_which_widgets_the_desk_keeps_its_open_verbs_from(home):
+    assert launcher.APP_WIDGETS == {"tips"} == set(launcher.TIPS_COMMANDS) & set(launcher.WIDGET_WORDS)
+    assert launcher.match("show machine", []).verb == "open"
+
+
+def test_saying_tips_opens_the_app_and_changes_nothing_on_the_desk(home, brain_lx):
+    """"Put Tips away. Say tips to see them again." and "Say tips to open the app.": the word opens the app, where
+    every tip can be seen, and leaves the desk as it is, put away or no longer kept. The card is brought back by
+    "keep tips" alone."""
+    lx, state = brain_lx
+    for text in ("hide tips", "tips", "show tips", "open tips"):
+        done, _line = lx.run(launcher.match(text, []))
+        assert done is True, text
+    assert lx.desk_state.state_of("tips") == "off"
+    assert state["opened"] == ["tips", "tips", "tips"]
+    lx.run(launcher.match("keep tips", []))
+    assert lx.desk_state.state_of("tips") == "keep"
+    lx.run(launcher.match("hide tips", []))
+    lx.run(launcher.match("tips", []))
+    assert lx.desk_state.state_of("tips") == "needed"                         # still no longer kept, not put away
+
+
+def test_tips_is_offered_for_tab_by_its_one_word(home):
+    entries = launcher.entries(_apps(home))
+    [command] = [e for e in entries if e["name"] == "tips" and e["kind"] == "command"]
+    assert command == {"name": "tips", "title": "Tips", "kind": "command", "words": ["tips"]}
+    [widget] = [e for e in entries if e["name"] == "tips" and e["kind"] == "widget"]
+    assert widget == {"name": "tips", "title": "Tips", "kind": "widget", "words": ["tips"], "keep": True}
+    assert "open" not in widget                          # the app answers "show tips", so the hint is true
+    assert "help" not in {e["name"] for e in entries}                         # the other words are not completions
+
+
+def test_the_line_says_what_the_tips_word_does():
+    a = launcher.Action("tips", title="Tips")
+    assert launcher.Launcher.doing(a) == "Opening Tips" and launcher.Launcher.failed(a) == "Could not open Tips"
+
+
+def test_tips_opens_the_tips_app_and_says_so(home, brain_lx):
+    lx, state = brain_lx
+    assert lx.run(launcher.match("what can you do")) == (True, "Opened Tips.")
+    assert state["opened"] == ["tips"]
+
+
+def test_an_open_tips_window_comes_forward_instead_of_starting_twice(home, brain_lx):
+    lx, state = brain_lx
+    state["running"] = True
+    assert lx.run(launcher.Action("tips")) == (True, "Opened Tips.")
+    assert state["opened"] == []
+    assert state["hypr_obj"].calls == [("dispatch", 'hl.dsp.focus({ window = "class:^(bombadil-app-tips)$" })')]
+
+
+def test_tips_slides_in_from_its_drawer_when_the_kit_has_drawers(home, brain_lx, monkeypatch):
+    lx, state = brain_lx
+    shown = []
+
+    class Placement:
+        @staticmethod
+        def show(name):
+            shown.append(name)
+    monkeypatch.setattr(launcher, "_placement", lambda: Placement)
+    assert lx.run(launcher.Action("tips"))[0] is True
+    assert shown == ["tips"] and state["opened"] == []
+    lx.open_tips()                                              # agentd opens it for a press on the card, quietly
+    assert shown == ["tips", "tips"]
+
+
+def test_tips_says_plainly_when_the_window_cannot_open(home, brain_lx, monkeypatch):
+    lx, _ = brain_lx
+
+    def broken(name):
+        raise OSError("no runner")
+    monkeypatch.setattr(launcher.apps, "run", broken)
+    assert lx.run(launcher.Action("tips", title="Tips")) == (False, "Could not open Tips: no runner")
+
+
 # -- messages and connections --
 
 @pytest.mark.parametrize("text, target, title", [
@@ -1241,7 +1375,11 @@ def test_messages_and_connections_are_offered_for_tab_once_each_as_commands(home
     for name, title in (("messages", "Messages"), ("connections", "Connections")):
         [e] = [e for e in entries if e["name"] == name]
         assert e == {"name": name, "title": title, "kind": "command", "words": [name]}
-    assert len({e["name"] for e in entries}) == len(entries)           # no name is offered twice
+    # no name is offered twice, except Tips, which is both the desk's widget (its verbs) and the app's command (the
+    # bare word): the pill takes the widget only after a verb and the command only without one
+    assert len({(e["name"], e["kind"]) for e in entries}) == len(entries)
+    assert sorted(e["kind"] for e in entries if e["name"] == "tips") == ["command", "widget"]
+    assert len({e["name"] for e in entries if e["name"] != "tips"}) == len(entries) - 2
 
 
 def test_the_line_says_what_the_connection_words_are_doing_and_what_went_wrong(home):

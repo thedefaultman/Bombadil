@@ -41,7 +41,7 @@ flowchart LR
     cli -->|unix socket| svc
     svc <-->|unix socket| host
     host <-->|stdio frames| tb
-    tb <-->|IMAP, SMTP, Graph| srv
+    tb <-->|IMAP, SMTP| srv
 ```
 
 The press, in time: the window shows a draft, the person presses Send, agentd checks who pressed, and the
@@ -76,7 +76,7 @@ sequenceDiagram
 | os-mcp | `src/bombadil/mail/tools.py` | `mail_search`, `mail_read`, `mail_draft`, `mail_mark`, `mail_show`: each a line to agentd |
 
 Nothing waits for mail: a caller that cannot reach the service says "Mail is not running yet" in its own
-line, agentd's pokes give up after 0.3 s, and a turn never blocks on Thunderbird.
+line, the launcher's ask to show a view waits at most a second (`MAIL_SHOW_SECONDS` in `src/bombadil/launcher.py`), and a turn never blocks on Thunderbird.
 
 ## Files and state
 
@@ -103,10 +103,11 @@ the service runs is set aside as `mail.db.broken` (with its `-wal` and `-shm`) a
 accounts come back from Thunderbird's own list. What was only in it (marks, open drafts and their
 attachment copies, which addresses were written to, which accounts were removed on purpose) is gone. The
 one request that found it damaged is answered `internal` with "Mail's own notes were damaged and had to
-be started again. Try that once more." Housekeeping, at every start and then every hour: a draft found
+be started again. Try that once more." Housekeeping, at every start: a draft found
 `sending` becomes `unknown` (and a row with `"src": "mail"` and code `unknown_outcome` goes to the press
-log); drafts sent or discarded more than 30 days ago are forgotten with their receipts; copies of drafts
-that no longer exist and half-fetched attachments (`inflight/`) are deleted. `presses.jsonl` is cut at
+log), and copies of drafts that no longer exist and half-fetched attachments (`inflight/`) are deleted.
+At every start and then every hour, drafts sent or discarded more than 30 days ago are forgotten with
+their receipts and the copies of their files. `presses.jsonl` is cut at
 1 MiB into `presses.jsonl.1`, and one older part is kept. Nothing of a mail's text is in any of these.
 
 ## Wire protocol, client side (`mail.sock`)
@@ -239,7 +240,7 @@ press on the Send button the view shows, for exactly what the view showed:
    one that has gone (exited, a zombie, or no longer in `/proc`): it fails closed, and what it could not
    look at is the agent's. It looks twice, when the connection is made (the verdict is kept with the
    connection and handed to `Outbox.press` as `was_agent`) and again at the press, and either one refusing
-   refuses (code `agent`, "That is not something I send. Nothing was sent."), because `SO_PEERCRED` names
+   refuses (code `agent`, "That press came from inside an agent's turn, and sending is yours. If this is your own window, close it and open it again from the pill. Nothing was sent."), because `SO_PEERCRED` names
    whoever called `connect()`, not whoever holds the socket now. It logs the press, calls the service's `send` once, and answers the sender with
    `press_result` (below). The service's own `send` (it asks the kernel who is calling, as agentd does,
    and refuses a process inside an agent turn's scope, or one that cannot be named or has gone since it
@@ -296,10 +297,9 @@ service's own check, which should do the same for a peer that has gone): `Outbox
 peer by the number `SO_PEERCRED` recorded, and a process in a turn that connects to agentd, gives the socket
 to a child and exits would press with a number that is gone, which is in no scope; a gone number is
 treated as inside a turn, and the connect-time verdict is kept (above). An app of the person's own called
-`mail` (`~/Apps/mail`) would be run by `apps.app_dir` in place of the real window: the launcher answers
-the mail words before the person's own apps and refuses to open that app, but `open_app`, `show_app` and
-`bombadil-app run mail` do not go through the launcher, and `apps.py` (not agentd's) should reserve the
-name. The press log (`presses.jsonl`, and `told.json`, mode 0600) holds both writers' rows: agentd's with `"src": "agentd"`,
+`mail` (`~/Apps/mail`) cannot take the real window's place: `apps.py` reserves the name (`RESERVED`), so
+`apps.app_dir` returns the built-in folder whatever `~/Apps` holds and `create` refuses it, and the launcher
+answers the mail words before the person's own apps. The press log (`presses.jsonl`, and `told.json`, mode 0600) holds both writers' rows: agentd's with `"src": "agentd"`,
 the service's with `"src": "mail"`; a send the service reports that no press of agentd's started is
 written with code `no_press` and said on the pill ("That was not your press on Send."). "Was this
 pressed" is a press in flight, one the service answered (it went, or it could not say: `unknown_outcome`,
@@ -637,6 +637,6 @@ What is true of Mail today and is not a bug to be found again.
 - **Thunderbird phones home.** Its update check and a Remote Settings poll have no preference that stops
   them (measured on 157). The image ships a policy file that turns the update check off; the poll remains
   and sends no mail data. Telemetry, the region lookup and extension updates are off in the profile.
-- **Not exercised on real accounts:** Gmail and Microsoft sign-in, Microsoft Graph, an iCloud app password.
+- **Not exercised on real accounts:** Gmail and Microsoft sign-in (Microsoft 365 runs on IMAP and SMTP with OAuth; there is no Graph code), an iCloud app password.
   The mail-server side is tested against a local IMAP and SMTP server, and Thunderbird 140, 156 and 157
   from Mozilla's own builds; Arch's package and a real compositor are the VM's checks.

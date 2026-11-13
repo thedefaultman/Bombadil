@@ -60,6 +60,7 @@ Item {
                 mark: !!entry.mark
                 textColor: entry.textColor !== undefined ? entry.textColor : T.muted
                 outlined: !!entry.outlined
+                onClicked: strips.desk.stripClicked(entry.id || "")
                 opacity: 0
                 Behavior on opacity { NumberAnimation { duration: Kit.Theme.duration(strips.desk.foldMs) } }
                 Component.onCompleted: opacity = 1

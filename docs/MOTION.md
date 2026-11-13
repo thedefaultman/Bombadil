@@ -75,13 +75,14 @@ the same `make_engine`, so a check sees what the window sees.
 | Surface | Normally | Under reduced motion |
 |---|---|---|
 | The stone, working or starting | rolls a third of a turn, once a second | one opacity pulse, 1 to 0.3 and back |
-| The stone, needs you | two knocks and a breathing glow, 1.6 s beat | holds still, glow held at 0.45 |
+| The stone, needs you | two knocks and a breathing glow on a 1.6 s beat, as a cue: it plays for 9.6 s when the face becomes `needs`, then the stone rests amber with the glow held at 0.45 and one 1.6 s beat plays every five minutes while the need stands | never plays: holds still, glow held at 0.45 |
 | The stone, done | one hop | fades in from 0.3 over 600 ms |
 | The stone, listening | leans toward the text over 240 ms | leans at once |
 | The wallpaper | the picture settles in over 300 ms | there at once |
 | A desk card folding or unfolding | opacity and scale, 150 ms out, 400 ms back | instant; the 400 ms wait before it returns stays, it is a delay |
 | A strip a card folded into | fades in over the fold's 150 ms | there at once |
 | The pill's width | eases over 150 ms as cards and windows come and go | instant |
+| The Tips card turning a tip, and its arrows and x | the picture, line and button crossfade over 200 ms; the arrows and x fade in over 120 ms with the pointer | instant; nothing on the card moves otherwise (no timer, no loop) |
 | A new row on a card | its colour washes the card's left edge for 600 ms | no wash; the row is there |
 | The ring around a live dot | breathes from small and strong to large and gone, 2 s | holds still, at 1.2 times and 60 % |
 | The line above the pill, the picture above it, the AI card, the Widgets card, the chips | fade 200 ms, grow 120 ms, border colours 120 to 300 ms | instant |
@@ -94,6 +95,7 @@ the same `make_engine`, so a check sees what the window sees.
 | Charts, meters, rings, the diagram | bars grow, axes ease, boxes slide | instant |
 | A tip's scene (`Kit.TipScene`, in the Tips app) | plays once, one clock running the length of the scene, and holds its last frame | nothing plays: three stills, each the last frame of a phase, and the clock is never started; the desk card's poster is always a still |
 | Brain and Mail (built-in apps) | draw no animation of their own; the kit's controls move as above | the same stills |
+| The Tips app's stage (`share/apps/tips`) | the tip in front plays once on `Kit.TipScene`'s clock and holds its last frame | three stills side by side, one per phase, each with its caption; Replay and Space have nothing to play. Its button and rows move as the kit's controls do, so they are instant |
 
 Not movement, so not touched: the desk's clock that ticks a counter every second, the line's 12 s stay, the
 Send button's arming delay in Mail, a toast's time on screen. A Timer that only counts or waits stays; one that

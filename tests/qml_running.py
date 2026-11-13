@@ -11,12 +11,12 @@ from collections import Counter
 def running_things(root):
     """Class names (QML type names stripped of Qt's suffixes) of every running Animation or Timer
     under `root`: a QObject, an item or a window. An empty list means nothing in it can change."""
-    found, seen, todo = [], set(), [root]
+    found, seen, todo = [], {}, [root]
     while todo:
         obj = todo.pop()
         if obj is None or id(obj) in seen:
             continue
-        seen.add(id(obj))
+        seen[id(obj)] = obj          # held, so a freed wrapper's id is never taken for another object's
         name = obj.metaObject().className()
         if ("Animation" in name or "Timer" in name) and obj.property("running") is True:
             found.append(name.split("_QMLTYPE")[0])

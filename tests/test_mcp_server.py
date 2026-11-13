@@ -182,6 +182,15 @@ def test_the_desk_tool_is_listed_with_what_it_can_do_and_no_more():
     assert "never rearrange the desk on your own" in tool["description"]
 
 
+def test_the_desk_tool_names_the_widgets_that_can_be_kept_and_tips_among_the_widgets():
+    """The agent is told which widgets keep (the ones with a calm face), so the sentence follows `desk.can`."""
+    text = next(t for t in rpc(make(), "tools/list")["result"]["tools"] if t["name"] == "desk")["description"]
+    calm = [w for w in desk.WIDGETS if "keep" in desk.can(w)]
+    assert calm == ["machine", "tips"]
+    assert "only one with a calm face: " + " and ".join(calm) + ")" in text
+    assert "now, watching, needs, away, machine, tips, alive" in text
+
+
 def test_the_desk_tool_asks_agentd_for_its_turn_and_returns_its_words(home, monkeypatch):
     monkeypatch.setenv("BOMBADIL_TURN", "7")
 

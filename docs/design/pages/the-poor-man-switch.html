@@ -321,18 +321,18 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <span class="eyebrow">Bombadil · design pass · 1 October 2026</span>
   <h1>The poor man switch</h1>
   <p class="lede">When Claude or Codex runs out, nothing you made stops. Bombadil says so once, with the time the AI comes back, holds every ask instead of failing it, still answers a sentence with things it finds on the computer, and gives you a switch to rest the AI yourself.</p>
-  <p class="note">This answers the owner’s ask of 30 September: a toggle that keeps the OS, the apps it made and their processes usable when the plan runs out. It sits on the earlier briefs, whose decisions stay in force. It was made from four research sweeps (what in the code needs the model, how both command-line tools report running out, whether a local model could stand in, what the briefs already decided), three independent drafts and two critiques. Code read on main at 26843d3.</p>
+  <p class="note">This answers the owner’s ask of 30 September: a toggle that keeps the OS, the apps it made and their processes usable when the plan runs out. It sits on the earlier briefs, whose decisions stay in force. It was made from four research sweeps (what in the code needs the model, how both command-line tools report running out, whether a local model could stand in, what the briefs already decided), three independent drafts and two critiques. Code read on main at 26843d3. Status on 1 October 2026: piece 1 is in progress and not on main; the rest is designed, and the local helper is not built.</p>
   <div class="hero-meta">
     <span>Build first: <b>Resting</b> and <b>the finder</b></span>
     <span>Questions: <b>3, answered 1a 2a 3a</b></span>
     <span>Local AI: <b>not now</b></span>
-    <span>Brief: <b>poor-man-switch-brief.md</b></span>
+    <span>Brief: <b><a href="../poor-man-switch-brief.md">poor-man-switch-brief.md</a></b></span>
   </div>
 </header>
 
 <div class="decide" id="questions">
   <h2>Three questions, answered: 1a 2a 3a</h2>
-  <p>Answered on 1 October 2026: the recommended option each time. The options stay as they were asked, so the reasoning is still readable; the picked one is marked.</p>
+  <p>Confirmed by the owner on 1 October 2026: the recommended option each time. The options stay as they were asked, so the reasoning is still readable; the picked one is marked.</p>
   <div class="decided"><b>What the answers change in the build</b><ul><li><b>1a:</b> the AI card and the words “pause Claude” and “resume Claude” are part of piece 1. No switch on the bar.</li><li><b>2a:</b> no local AI. The finder never calls a model, and nothing about a small model is built, installed or packaged.</li><li><b>3a:</b> recipes are in, as part of piece 7: only tasks whose every step undo can take back are kept, and each run saves a restore point.</li></ul></div>
   <div class="qs">
     <div class="qcard">
@@ -449,7 +449,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
         <div class="mini-app">
           <div class="bar">Notes</div>
           <div class="body">
-            <p class="txt"><b>Standup, 1 Oct.</b> Tracker colours, the March invoice, the VM idle CPU, who takes the mail view…</p>
+            <p class="txt"><b>Notes, 1 Oct.</b> Tracker colours, the March invoice, call the plumber…</p>
             <div class="acts"><span class="kbtn">Summarise<small>At 15:00</small></span><span class="kbtn">Copy</span></div>
           </div>
         </div>
@@ -567,7 +567,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <section id="first">
   <h2>Build these first</h2>
-  <p class="intro">These two make the machine stop pretending and keep it useful while it waits. Both reuse what already runs for the signed-out and offline setup states. They need a build thread of their own; they touch only main’s agentd, providers, launcher, the kit’s agent.py and the shell.</p>
+  <p class="intro">These two make the machine stop pretending and keep it useful while it waits. Both reuse what already runs for the signed-out and offline setup states. They need work of their own; they touch only main’s agentd, providers, launcher, the kit’s agent.py and the shell.</p>
   <div class="pieces">
     <article class="piece">
       <div class="piece-head"><span class="piece-num">1</span><h3>Resting: the machine knows it is out, holds your asks, and has a switch</h3><span class="effort">Effort M</span></div>
@@ -748,7 +748,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <details class="dec"><summary><span class="q">What runs at the reset?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>The cut-off ask first, in the same conversation, then every waiting ask in the order typed, with no age rule. The chip showed the time the whole while and × removes any of them; a hidden rule would need explaining.</p><p class="alt">Other options: asks older than 5 hours wait for a tap; nothing runs without a tap.</p></div></details>
     <details class="dec"><summary><span class="q">One button or several?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>One per case, as the first brief decided. “Resume Claude” on a timed limit would only be refused again, and “Raise the limit” appears only on spending limits, so time limits never nudge you toward spending.</p></div></details>
     <details class="dec"><summary><span class="q">Use Codex until 15:00</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>One button, only when Codex is signed in, never by itself. This is the first brief’s decision from 27 September, so it is not asked again. Moving drops the conversation and spends a second account.</p></div></details>
-    <details class="dec"><summary><span class="q">Opus to Sonnet by itself</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Yes, when only one family’s weekly limit is hit, said once. Free, keeps the conversation, and “use opus” undoes it. It waits for the model setting in the VM fixes.</p></div></details>
+    <details class="dec"><summary><span class="q">Opus to Sonnet by itself</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Yes, when only one family’s weekly limit is hit, said once. Free, keeps the conversation, and “use opus” undoes it. It waits for the model setting of the unmerged VM fixes.</p></div></details>
     <details class="dec"><summary><span class="q">Who may spend paid usage credits?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>What you ask for may; the machine’s own background use waits for the reset. Claude Code keeps going on credits by itself once you have turned them on; Bombadil adds only restraint on its own background calls and one line saying credits are in use.</p><p class="alt">Other options: everything; nothing past the plan’s limit without a press.</p></div></details>
     <details class="dec"><summary><span class="q">Does it check whether the limit is over?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>No test calls. With a time, the first waiting ask after it is the check, and if nothing waits nothing is sent; with no time, Raise the limit or Try again.</p></div></details>
     <details class="dec"><summary><span class="q">The refused turn’s restore point</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Kept, but the undo marker goes back so the next “undo” skips it if the turn changed nothing. Only one turn is refused per window now, so that is enough, and it needs no new sudo operation.</p></div></details>
@@ -763,21 +763,21 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <h2>Who owns what</h2>
   <div class="tbl">
     <table class="t stack">
-      <thead><tr><th>Thread</th><th>What it owns here</th></tr></thead>
+      <thead><tr><th>Piece</th><th>What it owns here</th></tr></thead>
       <tbody>
-        <tr><td data-label="Thread">Logo and design system</td><td data-label="Owns">Draws the resting stone (a new face and its drawing in Stone.qml); settles the fuel ring against “never a ring”</td></tr>
-        <tr><td data-label="Thread">Setup voice and welcome lines</td><td data-label="Owns">Words every line, button and placeholder; confirms the greeting is dropped under them</td></tr>
-        <tr><td data-label="Thread">Desk rails and first widgets</td><td data-label="Owns">Confirms resting is not needs-you and stays off the desk; Watching’s “Run again”; later, Away lists what ran at the reset</td></tr>
-        <tr><td data-label="Thread">App kit</td><td data-label="Owns">AskButton and the skill’s rule for it, and the “does” rows with their entry point; piece 1 changes agent.py itself</td></tr>
-        <tr><td data-label="Thread">Why lines and pictures</td><td data-label="Owns">The holding card the AI card grows into; routines that wait out a limit without counting failures</td></tr>
-        <tr><td data-label="Thread">Named coding sessions and turn dots</td><td data-label="Owns">“Paused until 15:00” from rest.json instead of red; its 80% line is piece 3’s line</td></tr>
-        <tr><td data-label="Thread">Noticed chip and self-checks</td><td data-label="Owns">A rest is never a finding; menders read rest.json; the local word write; recipes (question 3 a)</td></tr>
-        <tr><td data-label="Thread">Brain index and Focus view</td><td data-label="Owns">Descriptions wait while resting and never save a limit sentence; its search joins the finder</td></tr>
-        <tr><td data-label="Thread">Mail view and message cards</td><td data-label="Owns">“Needs a reply” and drafts wait; reading, your own replies and Send keep working</td></tr>
-        <tr><td data-label="Thread">Installed OS build</td><td data-label="Owns">The rescue screen shows the resting line; the conversation saved across reboots; no local model package (question 2 a)</td></tr>
-        <tr><td data-label="Thread">VM findings fixes</td><td data-label="Owns">The conversation kept across agentd restarts, “use sonnet” for piece 4, the 30 restore points resting now protects</td></tr>
-        <tr><td data-label="Thread">VM testing</td><td data-label="Owns">The 429 script, the “pause Claude” walk-through, and capturing a real limit as a test fixture</td></tr>
-        <tr><td data-label="Thread">A new build thread</td><td data-label="Owns">Pieces 1 and 2</td></tr>
+        <tr><td data-label="Piece">The mark and the design system</td><td data-label="Owns">Draws the resting stone (a new face and its drawing in Stone.qml); settles the fuel ring against “never a ring”</td></tr>
+        <tr><td data-label="Piece">Voice</td><td data-label="Owns">Words every line, button and placeholder; confirms the greeting is dropped under them</td></tr>
+        <tr><td data-label="Piece">The desk</td><td data-label="Owns">Confirms resting is not needs-you and stays off the desk; Watching’s “Run again”; later, Away lists what ran at the reset</td></tr>
+        <tr><td data-label="Piece">The app kit</td><td data-label="Owns">AskButton and the skill’s rule for it, and the “does” rows with their entry point; piece 1 changes agent.py itself</td></tr>
+        <tr><td data-label="Piece">Why lines and pictures of the machine</td><td data-label="Owns">The holding card the AI card grows into; routines that wait out a limit without counting failures</td></tr>
+        <tr><td data-label="Piece">Coding sessions</td><td data-label="Owns">“Paused until 15:00” from rest.json instead of red; its 80% line is piece 3’s line</td></tr>
+        <tr><td data-label="Piece">Self-improvement (the Noticed chip and self-checks)</td><td data-label="Owns">A rest is never a finding; menders read rest.json; the local word write; recipes (question 3 a)</td></tr>
+        <tr><td data-label="Piece">The Brain (index and Focus view)</td><td data-label="Owns">Descriptions wait while resting and never save a limit sentence; its search joins the finder</td></tr>
+        <tr><td data-label="Piece">Mail (the Mail view and message cards)</td><td data-label="Owns">“Needs a reply” and drafts wait; reading, your own replies and Send keep working</td></tr>
+        <tr><td data-label="Piece">The installed OS</td><td data-label="Owns">The rescue screen shows the resting line; the conversation saved across reboots; no local model package (question 2 a)</td></tr>
+        <tr><td data-label="Piece">VM fixes (not on main)</td><td data-label="Owns">The conversation kept across agentd restarts, “use sonnet” for piece 4, the 30 restore points resting now protects</td></tr>
+        <tr><td data-label="Piece">Testing on the VM</td><td data-label="Owns">The 429 script, the “pause Claude” walk-through, and capturing a real limit as a test fixture</td></tr>
+        <tr><td data-label="Piece">Pieces 1 and 2</td><td data-label="Owns">Need work of their own</td></tr>
       </tbody>
     </table>
   </div>
@@ -836,7 +836,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <footer>
   <span>Bombadil · The poor man switch · design pass of 1 October 2026</span>
-  <span>The full brief, with code references, is poor-man-switch-brief.md in the folder above this one. Code read on main at 26843d3.</span>
+  <span>The full brief, with code references, is <a href="../poor-man-switch-brief.md">poor-man-switch-brief.md</a> in the folder above this one. Code read on main at 26843d3.</span>
 </footer>
 
 </div>
