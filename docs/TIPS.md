@@ -38,7 +38,7 @@ scene is not true are in [`TIP-SCENES.md`](TIP-SCENES.md).
 | `share/apps/tips/` | The Tips app: a built-in kit app, the window where each tip plays. Its own section is below. |
 | `src/bombadil/launcher.py` | `TIPS_COMMANDS`: the words that open the app, and `APP_WIDGETS`, made from it: the desk widgets whose open words are the app's ([one word, two owners](#a-kept-tips-card)). |
 | `src/bombadil/appkit/native/agent.py` | `Agent.draft(text)`: the app's button. |
-| `tests/test_tips.py`, `tests/test_agentd_tips.py`, `tests/test_iso_profile.py` | The table, the gates and the card, and the twenty scenes drawn; agentd's side; the installer's copy. |
+| `tests/test_tips.py`, `tests/test_agentd_tips.py`, `tests/test_installer.py` | The table, the gates and the card, and the twenty scenes drawn; agentd's side; the installer's copy. |
 | `tests/tip_truth.py`, `tests/test_tip_truth.py` | The sentences the real code says, made by calling it, and every string of every scene held to them ([`TIP-SCENES.md`](TIP-SCENES.md#the-truth-test)). |
 | `tests/test_tips_app_backend.py`, `tests/test_tips_app_qml.py`, `tests/tips_app_lab.py` | The app's backend and its window, and the fake agentd they stand on. |
 
@@ -243,8 +243,7 @@ not about Tips run that way, so no other test hears a card.
 **A PR that adds something a person can ask ships its tip row and its scene in the same PR, gated by a `needs`
 flag until its code is on main.** It ships them the way it ships its docs: the row says what to ask, the scene
 shows it, the gate keeps both off every machine that cannot do it yet, and the PR that puts the code on main
-flips the gate's fact in `read_facts`. There is no `CONTRIBUTING` file in the repository yet to carry this line;
-when one is added it should point here.
+flips the gate's fact in `read_facts`. `CONTRIBUTING.md` carries this line and points here.
 
 1. Add a `[[tip]]` row to `share/tips/tips.toml` with a new id and the next `order` in its section. The row is a
    claim about this machine: put every gate it needs in `needs`, and write `tried_when` from the list above.
@@ -293,7 +292,7 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips.py tests/test_tip_tr
 - `tests/test_agentd_tips.py` drives a real `AgentD` on a socket with the Fake provider or a Python one-liner: the
   card sent once and only when it changed, the ops, the summon, the day of use, the evidence from each source,
   the 12 s turn (patched to 0.4 s), the beats that reach the card and the list, and Tips off. Nothing calls a model.
-- `tests/test_iso_profile.py` runs the installer's copy loop on two folders.
+- `tests/test_installer.py` runs the installer's copy of the Tips file on two folders (`test_the_installed_system_keeps_the_desks_places_and_what_tips_has_taught`, `test_a_live_system_with_nothing_to_carry_over_installs_all_the_same`).
 - `tests/test_tips_app_backend.py` and `tests/test_tips_app_qml.py` are the app's: see [the app's tests](#how-the-app-is-tested).
 
 What no test here shows is the card or the app on a real desk under Hyprland.

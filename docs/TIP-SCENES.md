@@ -381,7 +381,7 @@ Where a scene is less than the whole tip, it says so here, so the next person do
 - `picture` is drawn for a machine on a cable, four boxes, which is one of the shapes `capture_network` makes.
 - `keep` draws the Widgets card with the `window` beat: a panel above the line with one value for each row, the part
   that is raised, and not the card's three-part control, its questions or "Reset the desk". It shows three of the
-  five widgets the card lists (Now, Watching and Machine, in the card's own order; a window holds three rows on the
+  six widgets the card lists (Now, Watching and Machine, in the card's own order; a window holds three rows on the
   poster) and not the restart a kept widget survives: the scene ends on the Machine card the desk then shows.
 - The example content of a window (the Tickets rows, Notes, the Brain's rows) is tagged `model`: it is the
   agent's work, not a sentence of the code.

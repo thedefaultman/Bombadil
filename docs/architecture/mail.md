@@ -240,7 +240,7 @@ Mail says four things above the pill. Mail from someone the person knows, as "Pr
 | The add-on | `tests/test_mail_addon.py` runs `tests/mail/addon/*.test.js` with Node 22 or later on a fake `messenger`; `static.test.js` reads the add-on's files as text for what they may ask for | Yes |
 | The window | `tests/test_mail_app_backend.py`, `tests/test_mail_app_qml.py` (with `tests/mail_app_lab.py`), `tests/test_notice_qml.py` | Skipped without PySide6 |
 | A real Thunderbird | `tests/test_mail_addon_real.py`, `tests/test_mail_e2e_real.py`: a local Dovecot and SMTP sink on loopback, the shipped add-on, the real host | Skipped without an unpacked Thunderbird (`BOMBADIL_TEST_THUNDERBIRD`, else the lab's copy from `tests/mail/lab/fetch-thunderbird.sh`) and Dovecot |
-| The image | `tests/test_iso_profile.py` (unit, policy file, skill links), `tests/test_apps.py` (the reserved name) | Yes |
+| The image | `tests/test_iso_profile.py` (unit, policy file, skill links), `tests/test_apps.py` (the reserved names, `mail` and `tips`) | Yes |
 | The desktop and the VM | The notice steps of `tests/desktop/driver.py` and the mail checks of `iso/airootfs/usr/local/bin/bombadil-smoke`, both on the fake engine | Need Docker or QEMU; see [development](../contributing/development.md) |
 | The lab | `tests/mail/lab/`: scripts `q1` to `q5`, and `FINDINGS.md` with what Thunderbird 157 did | Needs a download and Dovecot |
 

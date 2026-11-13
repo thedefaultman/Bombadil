@@ -726,7 +726,7 @@ that does not restart, and a change to the smoke's own protocol sooner.
 
 Not run on 2026-11-08: the container has no QEMU and no `/dev/kvm`. `bombadil-smoke` and `test-vm.sh`
 pass `bash -n`, `scripts/qmp.py` parses, and the unit tests that read the smoke as text passed
-(`tests/test_iso_profile.py`, `tests/test_boot_console.py`). The smoke's 21 checks of connections and notifications
+(`tests/test_iso_profile.py`, `tests/test_boot_console.py`). The smoke's checks of connections and notifications
 were added after that date and were read and not run; `tests/test_iso_profile.py` reads them as text and passed on
 2026-11-09 (46 tests). The modes `install-encrypted` and `refresh`, the layout and refresh checks and the idle check were
 added after that and were read and not run on 2026-11-12; `bash -n` passes on `bombadil-smoke`, `bombadil-install`,
