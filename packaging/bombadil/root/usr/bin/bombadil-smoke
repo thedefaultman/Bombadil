@@ -460,12 +460,17 @@ if [[ -z "$round_trip" ]]; then
   # Thunderbird's windows map while the pill holds the keyboard (a tap on Super), as they do when the engine
   # starts or a compose window opens under someone typing: "silent" has to leave the keyboard where it is, and
   # the word typed next has to reach the pill (the pill gives the keyboard back after 20 s, so this goes at once).
+  # The pill gives the keyboard back 20 s after the tap (shell.qml), and a slow machine needs most of that for two
+  # terminal windows to map, so the host gets 4 s, not 8, to press each of these two. The times are printed.
   before=$(launcher_done browser "Opened the browser")
   { sleep 4; as_user foot --app-id Thunderbird -e sleep 120 & as_user foot --app-id org.mozilla.Thunderbird -e sleep 120 & wait; } >/dev/null 2>&1 &
-  keys meta_l
+  tap_at=$SECONDS
+  KEYS_WAIT=4 keys meta_l
   check mail-engine-window-hidden wait_for 60 engine_window_hidden
-  keys b r o w s e r ret
+  say "NOTE the windows were hidden $((SECONDS - tap_at)) s after the tap (the pill keeps the keyboard 20 s)"
+  KEYS_WAIT=4 keys b r o w s e r ret
   check mail-engine-window-keeps-the-keyboard wait_for 60 launcher_ran browser "Opened the browser" "$before"
+  say "NOTE the word was answered $((SECONDS - tap_at)) s after the tap"
   launcher_ran browser "Opened the browser" "$before" || say "DIAG the word did not reach the pill; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1)"
   check mail-engine-browser-hide mcp_call hide_panel '{"name":"browser"}'
   pkill -u user -f '^foot --app-id (org\.mozilla\.)?Thunderbird -e sleep 120$'
