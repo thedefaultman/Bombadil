@@ -430,7 +430,8 @@ mail_notice_from_agentd() { notice_from_agentd mail; }
 # The bar has it, and is showing it (the pill's own line must be free for a notice to show).
 line_state() { as_user timeout 10 quickshell ipc -p /usr/share/bombadil/shell/shell.qml call line state; }
 notice_on_the_line() {
-  line_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d["noticeShown"] and any(n["source"] == sys.argv[1] and n["actions"] for n in d["notices"])))' "$1"
+  # What is printed first is what a failure shows: the line's own state (busy, text, shown), then the notices.
+  line_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k: v for k, v in d.items() if k != "notices"}, d["notices"]); sys.exit(not (d["noticeShown"] and any(n["source"] == sys.argv[1] and n["actions"] for n in d["notices"])))' "$1"
 }
 mail_notice_on_the_line() { notice_on_the_line mail; }
 # Windows of class Thunderbird (the Arch package's is org.mozilla.Thunderbird) open on mail-engine, which is never
